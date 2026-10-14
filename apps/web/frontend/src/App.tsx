@@ -9,6 +9,7 @@ import { CategoriesPage } from './pages/CategoriesPage';
 import { ImportPage } from './pages/ImportPage';
 import './styles.css';
 
+//routes
 export const App: React.FC = () => {
   return (
     <ThemeProvider theme={theme}>
