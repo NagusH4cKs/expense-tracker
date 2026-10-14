@@ -1,4 +1,4 @@
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -7,6 +7,25 @@ const __dirname = path.dirname(__filename);
 
 const isWindows = process.platform === 'win32';
 const npmRunDev = isWindows ? 'npm.cmd run dev' : 'npm run dev';
+
+function freePort(port) {
+  try {
+    if (isWindows) {
+      execSync(
+        `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"`,
+        { stdio: 'ignore' }
+      );
+    } else {
+      execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: 'ignore' });
+    }
+  } catch (e) {
+    // Ignore if no process was running
+  }
+}
+
+// Pre-flight cleanup: Ensure default ports 5000 and 5173 are free
+freePort(5000);
+freePort(5173);
 
 console.log('\x1b[36m%s\x1b[0m', '==================================================');
 console.log('\x1b[36m%s\x1b[0m', '🚀 Starting Expense Tracker (Backend + Frontend)...');

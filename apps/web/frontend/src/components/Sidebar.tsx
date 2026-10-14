@@ -20,6 +20,7 @@ import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import AccountBalanceWalletRoundedIcon from '@mui/icons-material/AccountBalanceWalletRounded';
 import CreditCardRoundedIcon from '@mui/icons-material/CreditCardRounded';
 
+import { useLocation, useNavigate } from 'react-router-dom';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
 
 export const DRAWER_WIDTH = 260;
@@ -29,8 +30,8 @@ export type NavigationPage = 'dashboard' | 'transactions' | 'categories' | 'impo
 interface SidebarProps {
   mobileOpen: boolean;
   onClose: () => void;
-  activePage: NavigationPage;
-  onPageChange: (page: NavigationPage) => void;
+  activePage?: NavigationPage;
+  onPageChange?: (page: NavigationPage) => void;
   onAddTransaction: () => void;
 }
 
@@ -41,31 +42,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onPageChange,
   onAddTransaction,
 }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
   const navItems = [
     {
       id: 'dashboard' as const,
+      path: '/dashboard',
       label: 'Dashboard',
       icon: <DashboardRoundedIcon />,
     },
     {
       id: 'transactions' as const,
+      path: '/transactions',
       label: 'Transactions',
       icon: <ReceiptLongRoundedIcon />,
     },
     {
       id: 'categories' as const,
+      path: '/categories',
       label: 'Category & Group Master',
       icon: <CategoryRoundedIcon />,
     },
     {
       id: 'import' as const,
+      path: '/import',
       label: 'Import Statement',
       icon: <UploadFileRoundedIcon />,
     },
   ];
 
-  const handleNavClick = (page: NavigationPage) => {
-    onPageChange(page);
+  const handleNavClick = (item: (typeof navItems)[number]) => {
+    navigate(item.path);
+    if (onPageChange) onPageChange(item.id);
     onClose();
   };
 
@@ -142,11 +151,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <List sx={{ mt: 1, p: 0 }}>
           {navItems.map((item) => {
-            const isActive = activePage === item.id;
+            const isActive =
+              item.id === 'dashboard'
+                ? location.pathname === '/' || location.pathname.startsWith('/dashboard')
+                : location.pathname.startsWith(item.path);
             return (
               <ListItem key={item.id} disablePadding sx={{ mb: 0.8 }}>
                 <ListItemButton
-                  onClick={() => handleNavClick(item.id)}
+                  onClick={() => handleNavClick(item)}
                   selected={isActive}
                   sx={{
                     borderRadius: 2,

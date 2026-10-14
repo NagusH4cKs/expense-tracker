@@ -42,14 +42,19 @@ import { categoryService } from '../services/category.service';
 import { CategoryItem } from '../types/category';
 import { SAMPLE_ICICI_STATEMENT } from '../data/sampleStatement';
 
-interface ImportStepperProps {
-  onFinish: () => void;
+import { useNavigate } from 'react-router-dom';
+
+export interface ImportPageProps {
+  onFinish?: () => void;
   onNavigateCategories?: () => void;
 }
 
 const STEPS = ['Upload Statement', 'Columns Mapping', 'Review & Categorize', 'Import Complete'];
 
-export const ImportStepper: React.FC<ImportStepperProps> = ({ onFinish, onNavigateCategories }) => {
+export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCategories }) => {
+  const navigate = useNavigate();
+  const handleFinish = onFinish || (() => navigate('/transactions'));
+  const handleNavigateCategories = onNavigateCategories || (() => navigate('/categories'));
   const [activeStep, setActiveStep] = useState<number>(0);
   const [file, setFile] = useState<File | null>(null);
   const [rawCsvText, setRawCsvText] = useState<string>('');
@@ -768,7 +773,7 @@ export const ImportStepper: React.FC<ImportStepperProps> = ({ onFinish, onNaviga
             <Button
               variant="contained"
               color="primary"
-              onClick={onFinish}
+              onClick={handleFinish}
               sx={{ px: 3, py: 1.2, fontWeight: 600 }}
             >
               View in Transactions Ledger
@@ -794,3 +799,6 @@ export const ImportStepper: React.FC<ImportStepperProps> = ({ onFinish, onNaviga
     </Box>
   );
 };
+
+export { ImportPage as ImportStepper };
+export default ImportPage;

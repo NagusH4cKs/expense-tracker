@@ -30,7 +30,7 @@ import { categoryService } from '../services/category.service';
 import { groupService } from '../services/group.service';
 import { CategoryItem } from '../types/category';
 
-export const CategoryMaster: React.FC = () => {
+export const CategoriesPage: React.FC = () => {
   const [categories, setCategories] = useState<CategoryItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -491,3 +491,6 @@ export const CategoryMaster: React.FC = () => {
     </Box>
   );
 };
+
+export { CategoriesPage as CategoryMaster };
+export default CategoriesPage;

@@ -103,11 +103,16 @@ const CURRENT_MONTH = String(now.getMonth() + 1).padStart(2, '0');
 const CURRENT_DAY = String(now.getDate()).padStart(2, '0');
 const CURRENT_FULL_DATE = `${CURRENT_YEAR}-${CURRENT_MONTH}-${CURRENT_DAY}`;
 
-interface DashboardViewProps {
+import { useNavigate } from 'react-router-dom';
+
+export interface DashboardPageProps {
   onNavigateToImport?: () => void;
 }
 
-export const DashboardView: React.FC<DashboardViewProps> = () => {
+export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport }) => {
+  const navigate = useNavigate();
+  const handleNavigateToImport = onNavigateToImport || (() => navigate('/import'));
+
   // 1. Common Filters State (Controls Top 4 Metric Cards & Defaults to Current Month & Year)
   const [commonYear, setCommonYear] = useState<string>(CURRENT_YEAR);
   const [commonMonth, setCommonMonth] = useState<string>(CURRENT_MONTH);
@@ -1151,3 +1156,6 @@ export const DashboardView: React.FC<DashboardViewProps> = () => {
     </Box>
   );
 };
+
+export { DashboardPage as DashboardView };
+export default DashboardPage;

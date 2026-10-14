@@ -1,13 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Toolbar } from '@mui/material';
+import { Outlet } from 'react-router-dom';
 import { Sidebar, DRAWER_WIDTH, NavigationPage } from './Sidebar';
 import { Navbar } from './Navbar';
+import { AddTransactionModal } from '../pages/AddTransactionModal';
+import { categoryService } from '../services/category.service';
+import { CategoryItem } from '../types/category';
 
 interface LayoutProps {
-  children: React.ReactNode;
-  activePage: NavigationPage;
-  onPageChange: (page: NavigationPage) => void;
-  onAddTransaction: () => void;
+  children?: React.ReactNode;
+  activePage?: NavigationPage;
+  onPageChange?: (page: NavigationPage) => void;
+  onAddTransaction?: () => void;
 }
 
 export const Layout: React.FC<LayoutProps> = ({
@@ -17,6 +21,12 @@ export const Layout: React.FC<LayoutProps> = ({
   onAddTransaction,
 }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [dbCategories, setDbCategories] = useState<CategoryItem[]>([]);
+
+  useEffect(() => {
+    categoryService.getAll().then(setDbCategories).catch(() => {});
+  }, []);
 
   const handleDrawerToggle = () => {
     setMobileOpen((prev) => !prev);
@@ -26,13 +36,21 @@ export const Layout: React.FC<LayoutProps> = ({
     setMobileOpen(false);
   };
 
+  const handleOpenAddModal = () => {
+    if (onAddTransaction) {
+      onAddTransaction();
+    } else {
+      setIsAddModalOpen(true);
+    }
+  };
+
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
       {/* Top Fixed Navbar */}
       <Navbar
         onDrawerToggle={handleDrawerToggle}
         activePage={activePage}
-        onAddTransaction={onAddTransaction}
+        onAddTransaction={handleOpenAddModal}
       />
 
       {/* Navigation Sidebar Drawer */}
@@ -41,7 +59,7 @@ export const Layout: React.FC<LayoutProps> = ({
         onClose={handleDrawerClose}
         activePage={activePage}
         onPageChange={onPageChange}
-        onAddTransaction={onAddTransaction}
+        onAddTransaction={handleOpenAddModal}
       />
 
       {/* Main Content Area */}
@@ -62,9 +80,22 @@ export const Layout: React.FC<LayoutProps> = ({
 
         {/* Page Content */}
         <Box sx={{ flexGrow: 1, maxWidth: 1400, width: '100%', mx: 'auto' }}>
-          {children}
+          {children || <Outlet />}
         </Box>
       </Box>
+
+      {/* Add Transaction Dialog accessible from anywhere */}
+      <AddTransactionModal
+        open={isAddModalOpen}
+        dbCategories={dbCategories}
+        onClose={() => setIsAddModalOpen(false)}
+        onSuccess={() => {
+          setIsAddModalOpen(false);
+          window.dispatchEvent(new CustomEvent('transaction-updated'));
+        }}
+      />
     </Box>
   );
 };
+
+export default Layout;

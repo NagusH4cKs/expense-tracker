@@ -7,13 +7,14 @@ import {
   Box,
   Button,
 } from '@mui/material';
+import { useLocation } from 'react-router-dom';
 import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import { DRAWER_WIDTH, NavigationPage } from './Sidebar';
 
 interface NavbarProps {
   onDrawerToggle: () => void;
-  activePage: NavigationPage;
+  activePage?: NavigationPage;
   onAddTransaction: () => void;
 }
 
@@ -22,6 +23,15 @@ export const Navbar: React.FC<NavbarProps> = ({
   activePage,
   onAddTransaction,
 }) => {
+  const location = useLocation();
+
+  const currentNavPage: NavigationPage = activePage || (() => {
+    if (location.pathname.startsWith('/transactions')) return 'transactions';
+    if (location.pathname.startsWith('/categories')) return 'categories';
+    if (location.pathname.startsWith('/import')) return 'import';
+    return 'dashboard';
+  })();
+
   const titles: Record<NavigationPage, { title: string; subtitle: string }> = {
     dashboard: {
       title: 'Financial Dashboard',
@@ -41,7 +51,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     },
   };
 
-  const { title: pageTitle, subtitle: pageSubtitle } = titles[activePage] || titles.dashboard;
+  const { title: pageTitle, subtitle: pageSubtitle } = titles[currentNavPage] || titles.dashboard;
 
   return (
     <AppBar
