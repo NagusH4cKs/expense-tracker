@@ -1,7 +1,31 @@
+# Dependencies
 node_modules/
+
+# Production builds
 dist/
+build/
+*.tsbuildinfo
+
+# SQLite Database
+*.db
+*.db-journal
+backend/prisma/*.db
+backend/prisma/*.db-journal
+
+# Environment variables
 .env
-.env.*
-!.env.example
-.expo/
+*.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS and Editor
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Scratch & test scripts
+scratch/
