@@ -6,11 +6,15 @@ import {
   IconButton,
   Box,
   Button,
+  Avatar,
+  Tooltip,
 } from '@mui/material';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import { DRAWER_WIDTH, NavigationPage } from './Sidebar';
+import { useAuth } from '../context/AuthContext';
 
 interface NavbarProps {
   onDrawerToggle: () => void;
@@ -24,6 +28,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onAddTransaction,
 }) => {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
 
   const currentNavPage: NavigationPage = activePage || (() => {
     if (location.pathname.startsWith('/transactions')) return 'transactions';
@@ -125,8 +131,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Right Actions */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 1.5 } }}>
-
-
           <Button
             variant="contained"
             color="primary"
@@ -142,6 +146,62 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             Add
           </Button>
+
+          {user && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                bgcolor: '#f1f5f9',
+                px: 1.2,
+                py: 0.5,
+                borderRadius: 3,
+                border: '1px solid #e2e8f0',
+              }}
+            >
+              <Avatar
+                sx={{
+                  width: 28,
+                  height: 28,
+                  bgcolor: 'primary.main',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                }}
+              >
+                {user.username.charAt(0).toUpperCase()}
+              </Avatar>
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 700,
+                  color: 'text.primary',
+                  display: { xs: 'none', sm: 'block' },
+                }}
+              >
+                {user.name || user.username}
+              </Typography>
+            </Box>
+          )}
+
+          <Tooltip title="Sign Out">
+            <IconButton
+              size="small"
+              onClick={() => {
+                logout();
+                navigate('/login');
+              }}
+              sx={{
+                border: '1px solid #e2e8f0',
+                borderRadius: 2,
+                p: 0.8,
+                color: '#64748b',
+                '&:hover': { color: '#ef4444', bgcolor: '#fee2e2' },
+              }}
+            >
+              <LogoutRoundedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
         </Box>
       </Toolbar>
     </AppBar>

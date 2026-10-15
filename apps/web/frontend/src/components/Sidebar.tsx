@@ -22,6 +22,7 @@ import CreditCardRoundedIcon from '@mui/icons-material/CreditCardRounded';
 
 import { useLocation, useNavigate } from 'react-router-dom';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
+import { useAuth } from '../context/AuthContext';
 
 export const DRAWER_WIDTH = 260;
 
@@ -44,6 +45,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const navItems = [
     {
@@ -115,19 +117,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
             Expense Tracker
           </Typography>
-          <Chip
-            label="Personal Web"
-            size="small"
-            color="primary"
-            variant="outlined"
-            sx={{
-              height: 18,
-              fontSize: '0.65rem',
-              fontWeight: 600,
-              mt: 0.4,
-              borderColor: 'primary.light',
-            }}
-          />
+
         </Box>
       </Box>
 
@@ -263,20 +253,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
             sx={{
               width: 36,
               height: 36,
-              bgcolor: 'primary.light',
+              bgcolor: 'primary.main',
               fontSize: '0.9rem',
-              fontWeight: 600,
+              fontWeight: 700,
             }}
           >
-            P
+            {user?.username ? user.username.charAt(0).toUpperCase() : 'U'}
           </Avatar>
           <Box sx={{ overflow: 'hidden' }}>
             <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>
-              Personal User
+              {user ? user.name || user.username : 'Personal User'}
             </Typography>
-            <Typography variant="caption" noWrap sx={{ color: 'text.secondary', display: 'block' }}>
-              PostgreSQL Connected
-            </Typography>
+
           </Box>
         </Box>
       </Box>
