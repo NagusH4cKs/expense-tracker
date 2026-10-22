@@ -60,3 +60,11 @@ model Budget {
   @@unique([year, month])
 }
 
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
