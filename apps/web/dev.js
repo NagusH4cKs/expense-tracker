@@ -11,10 +11,17 @@ const npmRunDev = isWindows ? 'npm.cmd run dev' : 'npm run dev';
 function freePort(port) {
   try {
     if (isWindows) {
-      execSync(
-        `powershell -NoProfile -Command "Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"`,
-        { stdio: 'ignore' }
-      );
+      const output = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+      const lines = output.trim().split('\n');
+      for (const line of lines) {
+        if (line.includes('LISTENING')) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[parts.length - 1];
+          if (pid && pid !== '0' && pid !== String(process.pid)) {
+            execSync(`taskkill /pid ${pid} /f /t`, { stdio: 'ignore' });
+          }
+        }
+      }
     } else {
       execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: 'ignore' });
     }
@@ -64,7 +71,7 @@ function startProcess(name, cwd, colorCode) {
   });
 
   proc.on('close', (code) => {
-    if (code !== 0 && code !== null) {
+    if (code !== 0 && code !== null && code !== 4294967295 && code !== 130) {
       console.log(`${prefix}Process exited with code ${code}`);
     }
   });

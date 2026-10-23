@@ -67,11 +67,22 @@ export interface TimeSeriesItem {
   expense: number;
 }
 
+export interface CategoryBudgetDetail {
+  category: string;
+  budgetAmount: number;
+  spentAmount: number;
+  remainingBudget: number;
+  overBudget: number;
+  percentageSpent: number;
+  transactionCount?: number;
+}
+
 export interface BudgetInfo {
   budgetAmount: number;
   remainingBudget: number;
   overBudget: number;
   percentageSpent: number;
+  categories?: CategoryBudgetDetail[];
 }
 
 export interface AnalyticsData {
@@ -115,6 +126,11 @@ export const transactionService = {
     return res.data.data;
   },
 
+  async update(id: string, data: Partial<CreateTransactionDto>): Promise<TransactionItem> {
+    const res = await apiClient.patch<ApiResponse<TransactionItem>>(`/transactions/${id}`, data);
+    return res.data.data;
+  },
+
   async getAll(params?: GetTransactionsQuery): Promise<PaginatedTransactionsResponse> {
     const res = await apiClient.get<{ success: boolean; data: TransactionItem[]; pagination: PaginationMeta }>('/transactions', { params });
     return {
@@ -152,4 +168,3 @@ export const transactionService = {
     await apiClient.delete<ApiResponse<{ message: string }>>(`/transactions/${id}`);
   },
 };
-

@@ -53,11 +53,12 @@ model Budget {
   id        String   @id @default(uuid())
   year      Int
   month     Int      // 1 - 12
+  category  String   @default("ALL") // "ALL" for total monthly budget, or category name (e.g. "Investment")
   amount    Float
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([year, month])
+  @@unique([year, month, category])
 }
 
 model User {

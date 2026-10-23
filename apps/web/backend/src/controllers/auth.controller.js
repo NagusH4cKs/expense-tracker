@@ -5,6 +5,11 @@ import { hashPassword, verifyPassword, generateToken, verifyToken } from '../uti
  * Ensure default user 'Sugan' with password 'Sugan@123' exists in the database
  */
 export async function ensureDefaultUser() {
+  if (!process.env.DATABASE_URL) {
+    console.warn('\x1b[33m%s\x1b[0m', '⚠️ [Auth Warning]: DATABASE_URL is not set in your .env file. Please add DATABASE_URL="postgresql://..." to apps/web/.env to connect to your database.');
+    return null;
+  }
+
   try {
     const existing = await prisma.user.findFirst({
       where: {
@@ -39,7 +44,7 @@ export async function ensureDefaultUser() {
       return existing;
     }
   } catch (error) {
-    console.error('Error ensuring default user:', error);
+    console.error('Error ensuring default user:', error.message || error);
   }
 }
 

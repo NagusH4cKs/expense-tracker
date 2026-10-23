@@ -2,11 +2,11 @@ import { budgetService } from '../services/budget.service.js';
 
 export const getBudget = async (req, res) => {
   try {
-    const { year, month } = req.query;
+    const { year, month, category } = req.query;
     if (!year || !month) {
       return res.status(400).json({ success: false, message: 'Year and month are required' });
     }
-    const budget = await budgetService.getBudget(year, month);
+    const budget = await budgetService.getBudget(year, month, category);
     res.json({ success: true, data: budget });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -15,12 +15,22 @@ export const getBudget = async (req, res) => {
 
 export const setBudget = async (req, res) => {
   try {
-    const { year, month, amount } = req.body;
-    if (!year || !month || amount === undefined) {
-      return res.status(400).json({ success: false, message: 'Year, month, and amount are required' });
+    const { year, month, amount, category, categoryBudgets } = req.body;
+    if (!year || !month) {
+      return res.status(400).json({ success: false, message: 'Year and month are required' });
     }
-    const budget = await budgetService.setBudget(year, month, amount);
-    res.json({ success: true, data: budget, message: 'Budget set successfully' });
+    if (amount === undefined && (!Array.isArray(categoryBudgets) || categoryBudgets.length === 0)) {
+      return res.status(400).json({ success: false, message: 'Amount or categoryBudgets is required' });
+    }
+
+    const budget = await budgetService.setBudget({
+      year,
+      month,
+      amount,
+      category,
+      categoryBudgets,
+    });
+    res.json({ success: true, data: budget, message: 'Budget saved successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

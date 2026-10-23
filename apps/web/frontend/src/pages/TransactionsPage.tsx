@@ -22,6 +22,12 @@ import {
   Tooltip,
   TablePagination,
   CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
@@ -29,6 +35,9 @@ import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
 import CalendarMonthRoundedIcon from '@mui/icons-material/CalendarMonthRounded';
 import RestartAltRoundedIcon from '@mui/icons-material/RestartAltRounded';
 import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
+import EditRoundedIcon from '@mui/icons-material/EditRounded';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+import CategoryRoundedIcon from '@mui/icons-material/CategoryRounded';
 
 import { categoryService } from '../services/category.service';
 import { transactionService } from '../services/transaction.service';
@@ -43,6 +52,7 @@ export interface Transaction {
   amount: number;
   type: 'expense' | 'income';
   account: string;
+  remarks?: string;
 }
 
 const DEFAULT_CATEGORIES: readonly string[] = [
@@ -85,6 +95,19 @@ export const TransactionsPage: React.FC = () => {
   const [endDate, setEndDate] = useState<string>('');
   const [dbCategories, setDbCategories] = useState<CategoryItem[]>([]);
 
+  // Edit Category Modal State
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [editCategory, setEditCategory] = useState<string>('');
+  const [editGroup, setEditGroup] = useState<string>('');
+  const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false);
+
+  // Snackbar Notification State
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
+
   // Debounce search query so server gets query only after user finishes typing
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -109,6 +132,12 @@ export const TransactionsPage: React.FC = () => {
     return DEFAULT_CATEGORIES;
   }, [dbCategories]);
 
+  // Sub-groups available for the currently selected category in edit dialog
+  const availableEditGroups = useMemo(() => {
+    const found = dbCategories.find((c) => c.name === editCategory);
+    return found?.groups || [];
+  }, [dbCategories, editCategory]);
+
   // Load transactions server-side with pagination and query filters
   const loadTransactions = async () => {
     try {
@@ -131,6 +160,7 @@ export const TransactionsPage: React.FC = () => {
         amount: t.amount,
         type: t.type,
         account: t.account,
+        remarks: t.remarks || undefined,
       }));
 
       setTransactions(mapped);
@@ -174,8 +204,77 @@ export const TransactionsPage: React.FC = () => {
       await transactionService.delete(id);
       loadTransactions();
       window.dispatchEvent(new CustomEvent('transaction-updated'));
+      setSnackbar({
+        open: true,
+        message: 'Transaction deleted successfully',
+        severity: 'success',
+      });
     } catch {
-      // ignore
+      setSnackbar({
+        open: true,
+        message: 'Failed to delete transaction',
+        severity: 'error',
+      });
+    }
+  };
+
+  // Open Edit Dialog for a transaction
+  const handleOpenEdit = (tx: Transaction) => {
+    setEditingTransaction(tx);
+    setEditCategory(tx.category);
+    setEditGroup(tx.group || '');
+  };
+
+  // Close Edit Dialog
+  const handleCloseEdit = () => {
+    setEditingTransaction(null);
+    setEditCategory('');
+    setEditGroup('');
+  };
+
+  // Save Category / Group update
+  const handleSaveEdit = async () => {
+    if (!editingTransaction) return;
+    if (!editCategory.trim()) {
+      setSnackbar({ open: true, message: 'Please select a category', severity: 'error' });
+      return;
+    }
+
+    try {
+      setIsSavingEdit(true);
+      await transactionService.update(editingTransaction.id, {
+        category: editCategory.trim(),
+        group: editGroup.trim() || null,
+      });
+
+      // Optimistically update table row
+      setTransactions((prev) =>
+        prev.map((t) =>
+          t.id === editingTransaction.id
+            ? { ...t, category: editCategory.trim(), group: editGroup.trim() || undefined }
+            : t
+        )
+      );
+
+      // Notify other views (dashboard analytics & budget cards update automatically!)
+      window.dispatchEvent(new CustomEvent('transaction-updated'));
+
+      setSnackbar({
+        open: true,
+        message: `Updated category to "${editCategory.trim()}" for "${editingTransaction.description}"`,
+        severity: 'success',
+      });
+
+      handleCloseEdit();
+    } catch (err: any) {
+      console.error('Failed to update category', err);
+      setSnackbar({
+        open: true,
+        message: err?.response?.data?.message || err?.message || 'Failed to update category',
+        severity: 'error',
+      });
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -436,6 +535,7 @@ export const TransactionsPage: React.FC = () => {
       <TransactionTable
         transactions={transactions}
         onDelete={handleDelete}
+        onEdit={handleOpenEdit}
         loading={isLoadingTransactions}
       />
 
@@ -463,6 +563,182 @@ export const TransactionsPage: React.FC = () => {
           },
         }}
       />
+
+      {/* ===================== EDIT CATEGORY MODAL ===================== */}
+      <Dialog
+        open={Boolean(editingTransaction)}
+        onClose={handleCloseEdit}
+        maxWidth="xs"
+        fullWidth
+        slotProps={{
+          paper: {
+            sx: { borderRadius: 3.5, p: 1 },
+          },
+        }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', pb: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <CategoryRoundedIcon color="primary" />
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              Edit Category
+            </Typography>
+          </Box>
+          <IconButton size="small" onClick={handleCloseEdit}>
+            <CloseRoundedIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+
+        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: 1.5 }}>
+          {/* Transaction Summary Preview Card */}
+          {editingTransaction && (
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2,
+                borderRadius: 2.5,
+                bgcolor: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.8,
+              }}
+            >
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary', flex: 1, pr: 1 }}>
+                  {editingTransaction.description}
+                </Typography>
+                <Typography
+                  variant="subtitle2"
+                  sx={{
+                    fontWeight: 800,
+                    whiteSpace: 'nowrap',
+                    color: editingTransaction.type === 'expense' ? 'error.main' : 'success.main',
+                  }}
+                >
+                  {editingTransaction.type === 'expense' ? '−' : '+'}
+                  {formatCurrency(editingTransaction.amount)}
+                </Typography>
+              </Box>
+
+              <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
+                <Typography variant="caption" color="text.secondary">
+                  📅 {editingTransaction.date}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  🏦 {editingTransaction.account}
+                </Typography>
+              </Box>
+            </Paper>
+          )}
+
+          {/* Category Dropdown */}
+          <FormControl fullWidth size="small">
+            <InputLabel id="edit-category-select-label">Category</InputLabel>
+            <Select
+              labelId="edit-category-select-label"
+              value={editCategory}
+              label="Category"
+              onChange={(e) => {
+                setEditCategory(e.target.value);
+                setEditGroup(''); // reset group when category changes
+              }}
+              sx={{ borderRadius: 2 }}
+            >
+              {categoriesList.map((cat) => (
+                <MenuItem key={cat} value={cat}>
+                  {cat}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          {/* Quick Select Preset Chips */}
+          <Box>
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 1 }}>
+              Quick Select Categories:
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap' }}>
+              {['Investment', 'Food & Dining', 'Grocery', 'Snacks', 'Travel', 'Home', 'Salary', 'Medicine', 'Other'].map(
+                (quickCat) => (
+                  <Chip
+                    key={quickCat}
+                    label={quickCat}
+                    size="small"
+                    clickable
+                    color={editCategory === quickCat ? 'primary' : 'default'}
+                    variant={editCategory === quickCat ? 'filled' : 'outlined'}
+                    onClick={() => {
+                      setEditCategory(quickCat);
+                      setEditGroup('');
+                    }}
+                    sx={{ fontWeight: 600, fontSize: '0.72rem' }}
+                  />
+                )
+              )}
+            </Box>
+          </Box>
+
+          {/* Sub-Group Dropdown (if groups exist for selected category) */}
+          {availableEditGroups.length > 0 && (
+            <FormControl fullWidth size="small">
+              <InputLabel id="edit-group-select-label">Sub-Group / Tag (Optional)</InputLabel>
+              <Select
+                labelId="edit-group-select-label"
+                value={editGroup}
+                label="Sub-Group / Tag (Optional)"
+                onChange={(e) => setEditGroup(e.target.value)}
+                sx={{ borderRadius: 2 }}
+              >
+                <MenuItem value="">
+                  <em>None (No group)</em>
+                </MenuItem>
+                {availableEditGroups.map((grp) => (
+                  <MenuItem key={grp.id} value={grp.name}>
+                    {grp.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          )}
+
+          <Typography variant="caption" color="text.secondary">
+            💡 Modifying the category will immediately update category expense totals and adjust the remaining budget on your dashboard.
+          </Typography>
+        </DialogContent>
+
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={handleCloseEdit} sx={{ fontWeight: 600 }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleSaveEdit}
+            disabled={isSavingEdit}
+            startIcon={isSavingEdit ? <CircularProgress size={16} color="inherit" /> : <EditRoundedIcon />}
+            sx={{ fontWeight: 600, px: 3, borderRadius: 2 }}
+          >
+            {isSavingEdit ? 'Saving...' : 'Update Category'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Snackbar Alert */}
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          severity={snackbar.severity}
+          variant="filled"
+          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+          sx={{ borderRadius: 2.5, fontWeight: 600 }}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Paper>
   );
 };
@@ -471,12 +747,14 @@ export const TransactionsPage: React.FC = () => {
 interface TransactionTableProps {
   transactions: Transaction[];
   onDelete: (id: string) => void;
+  onEdit: (tx: Transaction) => void;
   loading?: boolean;
 }
 
 const TransactionTable: React.FC<TransactionTableProps> = ({
   transactions,
   onDelete,
+  onEdit,
   loading = false,
 }) => {
   if (loading) {
@@ -545,7 +823,9 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
             >
               AMOUNT
             </TableCell>
-            <TableCell align="right" sx={{ width: 50 }}></TableCell>
+            <TableCell align="right" sx={{ width: 90 }}>
+              ACTIONS
+            </TableCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -566,32 +846,58 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                   {t.description}
                 </TableCell>
                 <TableCell>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
-                    <Chip
-                      label={t.category}
-                      size="small"
+                  <Tooltip title="Click to edit category & group" arrow>
+                    <Box
+                      onClick={() => onEdit(t)}
                       sx={{
-                        bgcolor: '#f1f5f9',
-                        color: '#475569',
-                        fontWeight: 600,
-                        fontSize: '0.75rem',
-                        borderRadius: 1.5,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 0.8,
+                        cursor: 'pointer',
+                        p: 0.4,
+                        borderRadius: 2,
+                        transition: 'background-color 0.2s',
+                        '&:hover': {
+                          bgcolor: 'rgba(79, 70, 229, 0.08)',
+                          '& .category-chip': {
+                            borderColor: 'primary.main',
+                            color: 'primary.main',
+                          },
+                        },
                       }}
-                    />
-                    {t.group && (
+                    >
                       <Chip
-                        label={t.group}
+                        className="category-chip"
+                        label={t.category}
                         size="small"
-                        variant="outlined"
+                        icon={<EditRoundedIcon sx={{ fontSize: '0.85rem !important' }} />}
                         sx={{
-                          borderColor: '#cbd5e1',
-                          color: '#64748b',
-                          fontSize: '0.72rem',
+                          bgcolor: '#f1f5f9',
+                          color: '#475569',
+                          fontWeight: 600,
+                          fontSize: '0.75rem',
                           borderRadius: 1.5,
+                          cursor: 'pointer',
+                          border: '1px solid transparent',
+                          transition: 'all 0.2s',
                         }}
                       />
-                    )}
-                  </Box>
+                      {t.group && (
+                        <Chip
+                          label={t.group}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            borderColor: '#cbd5e1',
+                            color: '#64748b',
+                            fontSize: '0.72rem',
+                            borderRadius: 1.5,
+                            cursor: 'pointer',
+                          }}
+                        />
+                      )}
+                    </Box>
+                  </Tooltip>
                 </TableCell>
                 <TableCell>
                   <Chip
@@ -617,18 +923,32 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                   {formatCurrency(t.amount)}
                 </TableCell>
                 <TableCell align="right">
-                  <Tooltip title="Delete">
-                    <IconButton
-                      size="small"
-                      onClick={() => onDelete(t.id)}
-                      sx={{
-                        color: '#94a3b8',
-                        '&:hover': { color: 'error.main', bgcolor: '#fee2e2' },
-                      }}
-                    >
-                      <DeleteOutlineRoundedIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                    <Tooltip title="Edit Category">
+                      <IconButton
+                        size="small"
+                        onClick={() => onEdit(t)}
+                        sx={{
+                          color: '#64748b',
+                          '&:hover': { color: 'primary.main', bgcolor: 'rgba(79, 70, 229, 0.08)' },
+                        }}
+                      >
+                        <EditRoundedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Delete">
+                      <IconButton
+                        size="small"
+                        onClick={() => onDelete(t.id)}
+                        sx={{
+                          color: '#94a3b8',
+                          '&:hover': { color: 'error.main', bgcolor: '#fee2e2' },
+                        }}
+                      >
+                        <DeleteOutlineRoundedIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </Box>
                 </TableCell>
               </TableRow>
             );

@@ -92,6 +92,20 @@ export const deleteTransaction = async (req, res) => {
   }
 };
 
+export const updateTransaction = async (req, res) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const transaction = await transactionService.update(id, req.body);
+    res.json({
+      success: true,
+      message: 'Transaction updated successfully',
+      data: transaction,
+    });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
+
 export const getSummary = async (_req, res) => {
   try {
     const summary = await transactionService.getSummary();
@@ -115,6 +129,7 @@ export const transactionController = {
   getTransactions,
   filterTransactions,
   createTransaction,
+  updateTransaction,
   deleteTransaction,
   getSummary,
   getAnalytics,

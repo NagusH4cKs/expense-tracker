@@ -126,6 +126,54 @@ export const deleteTransaction = async (id) => {
   });
 };
 
+export const updateTransaction = async (id, data) => {
+  const existing = await prisma.transaction.findUnique({ where: { id } });
+  if (!existing) {
+    throw new Error('Transaction not found');
+  }
+
+  const updateData = {};
+  if (data.category !== undefined) {
+    updateData.category = String(data.category).trim();
+  }
+  if (data.group !== undefined) {
+    updateData.group = data.group && String(data.group).trim() ? String(data.group).trim() : null;
+  }
+  if (data.description !== undefined) {
+    updateData.description = String(data.description).trim();
+  }
+  if (data.remarks !== undefined) {
+    updateData.remarks = data.remarks && String(data.remarks).trim() ? String(data.remarks).trim() : null;
+  }
+  if (data.amount !== undefined) {
+    const amt = parseFloat(data.amount);
+    if (isNaN(amt) || amt <= 0) {
+      throw new Error('Transaction amount must be a positive number');
+    }
+    updateData.amount = amt;
+  }
+  if (data.type !== undefined) {
+    if (!['expense', 'income'].includes(data.type)) {
+      throw new Error('Transaction type must be either expense or income');
+    }
+    updateData.type = data.type;
+  }
+  if (data.account !== undefined) {
+    updateData.account = String(data.account).trim();
+  }
+  if (data.date !== undefined) {
+    updateData.date = String(data.date).trim();
+  }
+  if (data.balance !== undefined) {
+    updateData.balance = data.balance !== null && !isNaN(parseFloat(data.balance)) ? parseFloat(data.balance) : null;
+  }
+
+  return prisma.transaction.update({
+    where: { id },
+    data: updateData,
+  });
+};
+
 export const getTransactionSummary = async () => {
     const transactions = await prisma.transaction.findMany();
     const income = transactions
@@ -242,20 +290,75 @@ export const getTransactionAnalytics = async (filters = {}) => {
       expense: Math.round(entry.expense * 100) / 100,
     }));
 
-    // 4. Budget Calculation for Selected Month
+    // 4. Budget Calculation for Selected Month (Overall + Category-wise)
     let budgetAmount = 0;
+    let categoryBudgetsList = [];
+
     if (year && year !== 'all' && month && month !== 'all') {
-      const budgetRecord = await prisma.budget.findUnique({
-        where: {
-          year_month: {
-            year: parseInt(year, 10),
-            month: parseInt(month, 10),
-          },
-        },
-      });
-      if (budgetRecord) {
-        budgetAmount = budgetRecord.amount;
+      const y = parseInt(year, 10);
+      const m = parseInt(month, 10);
+
+      // Fetch all budget records for this month
+      let budgetRecords = [];
+      try {
+        budgetRecords = await prisma.budget.findMany({
+          where: { year: y, month: m },
+        });
+      } catch (e) {
+        budgetRecords = [];
       }
+
+      const overallRecord = budgetRecords.find((b) => !b.category || b.category === 'ALL');
+      const catBudgetMap = {};
+      for (const b of budgetRecords) {
+        if (b.category && b.category !== 'ALL') {
+          catBudgetMap[b.category] = b.amount;
+        }
+      }
+
+      // If overall budget is set, use it; otherwise sum of category budgets
+      const sumCatBudgets = Object.values(catBudgetMap).reduce((acc, v) => acc + v, 0);
+      budgetAmount = overallRecord ? overallRecord.amount : sumCatBudgets;
+
+      // Get system categories to display in budget breakdown even if no expenses yet
+      let allCategoriesList = [];
+      try {
+        const dbCats = await prisma.category.findMany({ select: { name: true, type: true } });
+        allCategoriesList = dbCats.filter((c) => c.type !== 'income').map((c) => c.name);
+      } catch (e) {
+        allCategoriesList = [];
+      }
+
+      // Combine category names from expenses, budget records, and Category table
+      const allCategoryNames = new Set([
+        ...Object.keys(catMap),
+        ...Object.keys(catBudgetMap),
+        ...allCategoriesList,
+      ]);
+
+      categoryBudgetsList = Array.from(allCategoryNames).map((catName) => {
+        const catBudget = catBudgetMap[catName] || 0;
+        const spent = catMap[catName]?.value || 0;
+        const remaining = Math.max(0, catBudget - spent);
+        const over = catBudget > 0 && spent > catBudget ? spent - catBudget : 0;
+        const pct = catBudget > 0 ? Math.round((spent / catBudget) * 100) : 0;
+
+        return {
+          category: catName,
+          budgetAmount: Math.round(catBudget * 100) / 100,
+          spentAmount: Math.round(spent * 100) / 100,
+          remainingBudget: Math.round(remaining * 100) / 100,
+          overBudget: Math.round(over * 100) / 100,
+          percentageSpent: pct,
+          transactionCount: catMap[catName]?.count || 0,
+        };
+      });
+
+      // Sort categories: budgeted categories first, then highest spent
+      categoryBudgetsList.sort((a, b) => {
+        if (b.budgetAmount !== a.budgetAmount) return b.budgetAmount - a.budgetAmount;
+        return b.spentAmount - a.spentAmount;
+      });
     }
 
     const remainingBudget = Math.max(0, budgetAmount - totalExpenses);
@@ -289,10 +392,11 @@ export const getTransactionAnalytics = async (filters = {}) => {
         count: txs.length,
       },
       budget: {
-        budgetAmount,
+        budgetAmount: Math.round(budgetAmount * 100) / 100,
         remainingBudget: Math.round(remainingBudget * 100) / 100,
         overBudget: Math.round(overBudget * 100) / 100,
         percentageSpent,
+        categories: categoryBudgetsList,
       },
       categoryBreakdown,
       timeSeries,
@@ -307,6 +411,7 @@ export const getTransactionAnalytics = async (filters = {}) => {
 export const transactionService = {
   getAll: getAllTransactions,
   create: createTransaction,
+  update: updateTransaction,
   delete: deleteTransaction,
   getSummary: getTransactionSummary,
   getAnalytics: getTransactionAnalytics,
