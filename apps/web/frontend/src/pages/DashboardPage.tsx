@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Box,
   Card,
@@ -20,9 +20,6 @@ import {
   InputAdornment,
   LinearProgress,
   CircularProgress,
-  Tabs,
-  Tab,
-  Divider,
 } from '@mui/material';
 import ArrowDownwardRoundedIcon from '@mui/icons-material/ArrowDownwardRounded';
 import ArrowUpwardRoundedIcon from '@mui/icons-material/ArrowUpwardRounded';
@@ -35,11 +32,8 @@ import RefreshRoundedIcon from '@mui/icons-material/RefreshRounded';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import FilterAltRoundedIcon from '@mui/icons-material/FilterAltRounded';
-import CategoryRoundedIcon from '@mui/icons-material/CategoryRounded';
-import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import AccountBalanceWalletRoundedIcon from '@mui/icons-material/AccountBalanceWalletRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
-import AddRoundedIcon from '@mui/icons-material/AddRounded';
 
 import {
   ResponsiveContainer,
@@ -61,7 +55,6 @@ import {
   AnalyticsData,
   CategoryBreakdownItem,
   TimeSeriesItem,
-  CategoryBudgetDetail,
 } from '../services/transaction.service';
 import { budgetService } from '../services/budget.service';
 import { categoryService } from '../services/category.service';
@@ -141,6 +134,8 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
   // Overview Analytics (for 4 Cards & Budget)
   const [overviewData, setOverviewData] = useState<AnalyticsData | null>(null);
   const [overviewLoading, setOverviewLoading] = useState<boolean>(true);
+  const initialPeriodChecked = useRef(false);
+  const overviewRequestId = useRef(0);
 
   // 2. Individual Filters & Data for PIE CHART (Defaults to Current Month & Year)
   const [pieYear, setPieYear] = useState<string>(CURRENT_YEAR);
@@ -162,16 +157,15 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
   });
   const [barLoading, setBarLoading] = useState<boolean>(false);
 
-  // Budget Modal & Category Budgets State
+  // The budget card can show the monthly total or one master category.
+  const [budgetCategory, setBudgetCategory] = useState<string>('ALL');
   const [isBudgetModalOpen, setIsBudgetModalOpen] = useState<boolean>(false);
-  const [budgetInput, setBudgetInput] = useState<string>('75000');
-  const [categoryBudgetInputs, setCategoryBudgetInputs] = useState<Record<string, string>>({});
-  const [budgetModalSearch, setBudgetModalSearch] = useState<string>('');
+  const [budgetInput, setBudgetInput] = useState<string>('');
+  const [budgetSaveError, setBudgetSaveError] = useState<string>('');
   const [isSavingBudget, setIsSavingBudget] = useState<boolean>(false);
   const [dbCategories, setDbCategories] = useState<CategoryItem[]>([]);
-  const [budgetFilterTab, setBudgetFilterTab] = useState<'all' | 'budgeted' | 'unbudgeted'>('all');
 
-  // Load Categories from database for budget setup
+  // Load category choices from the master, without local fallback names.
   useEffect(() => {
     categoryService
       .getAll()
@@ -196,15 +190,16 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
 
   // Fetch Overview Data (Budget + 4 Metric Cards)
   const fetchOverviewAnalytics = async () => {
+    const requestId = ++overviewRequestId.current;
     try {
       setOverviewLoading(true);
       const data = await transactionService.getAnalytics({
         year: commonYear,
         month: commonMonth,
         date: commonDate,
+        budgetCategory,
       });
-      setOverviewData(data);
-
+      if (requestId !== overviewRequestId.current) return;
       if (data.filters?.availableYears?.length) {
         setAvailableYears(data.filters.availableYears);
       }
@@ -212,13 +207,25 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
         setAvailableDates(data.filters.availableDates);
       }
 
-      if (data.budget?.budgetAmount > 0) {
-        setBudgetInput(String(data.budget.budgetAmount));
+      // Open on the latest imported month when the current month has no transactions.
+      // Explicit period selections continue to show their own totals, including zero.
+      if (!initialPeriodChecked.current && commonYear === CURRENT_YEAR && commonMonth === CURRENT_MONTH && commonDate === 'all') {
+        initialPeriodChecked.current = true;
+        if (data.summary.count === 0 && data.filters?.availableDates?.length) {
+          const latestDate = data.filters.availableDates[data.filters.availableDates.length - 1];
+          if (latestDate.slice(0, 7) !== `${CURRENT_YEAR}-${CURRENT_MONTH}`) {
+            setCommonYear(latestDate.slice(0, 4));
+            setCommonMonth(latestDate.slice(5, 7));
+            return;
+          }
+        }
       }
+      setOverviewData(data);
+
     } catch (err) {
-      console.error('Failed to load overview analytics', err);
+      if (requestId === overviewRequestId.current) console.error('Failed to load overview analytics', err);
     } finally {
-      setOverviewLoading(false);
+      if (requestId === overviewRequestId.current) setOverviewLoading(false);
     }
   };
 
@@ -265,7 +272,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
   // Effects
   useEffect(() => {
     fetchOverviewAnalytics();
-  }, [commonYear, commonMonth, commonDate]);
+  }, [commonYear, commonMonth, commonDate, budgetCategory]);
 
   useEffect(() => {
     fetchPieAnalytics();
@@ -284,126 +291,58 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
     };
     window.addEventListener('transaction-updated', handleRefresh);
     return () => window.removeEventListener('transaction-updated', handleRefresh);
-  }, [commonYear, commonMonth, commonDate, pieYear, pieMonth, pieDate, barYear, barMonth, barDate]);
+  }, [commonYear, commonMonth, commonDate, budgetCategory, pieYear, pieMonth, pieDate, barYear, barMonth, barDate]);
 
-  // Open Budget Modal and prepopulate category inputs
-  const handleOpenBudgetModal = (focusCategory?: string) => {
-    const existingCats = overviewData?.budget?.categories || [];
-    const inputs: Record<string, string> = {};
-    existingCats.forEach((c) => {
-      if (c.budgetAmount > 0) {
-        inputs[c.category] = String(c.budgetAmount);
-      }
-    });
-    setCategoryBudgetInputs(inputs);
-    setBudgetModalSearch(focusCategory || '');
-    if (overviewData?.budget?.budgetAmount && overviewData.budget.budgetAmount > 0) {
-      setBudgetInput(String(overviewData.budget.budgetAmount));
+  // Edit the target for the selected monthly or master-category scope.
+  const handleOpenBudgetModal = () => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
     }
+    setBudgetInput(String(overviewData?.budget?.budgetAmount ?? 0));
+    setBudgetSaveError('');
     setIsBudgetModalOpen(true);
   };
 
-  // Auto calculate total budget as sum of category budgets
-  const handleAutoSumCategories = () => {
-    const sum = Object.values(categoryBudgetInputs).reduce((acc, v) => acc + (parseFloat(v) || 0), 0);
-    setBudgetInput(String(sum));
-  };
-
-  // Save / Update Budget by Month & Categories
   const handleSaveBudget = async () => {
+    const amount = Number(budgetInput);
+    if (!Number.isFinite(amount) || amount < 0 || budgetInput.trim() === '') {
+      setBudgetSaveError('Enter a non-negative budget amount.');
+      return;
+    }
     try {
       setIsSavingBudget(true);
-      const m = commonMonth === 'all' ? (now.getMonth() + 1) : parseInt(commonMonth, 10);
-      const y = parseInt(commonYear, 10) || now.getFullYear();
-      const totalAmt = parseFloat(budgetInput) || 0;
-
-      const categoryBudgets = Object.entries(categoryBudgetInputs).map(([cat, val]) => ({
-        category: cat,
-        amount: parseFloat(val) || 0,
-      }));
-
-      await budgetService.setCategoryBudgets({
-        year: y,
-        month: m,
-        amount: totalAmt,
-        categoryBudgets,
-      });
-
+      await budgetService.setBudget(Number(commonYear), Number(commonMonth), amount, budgetCategory);
       setIsBudgetModalOpen(false);
       await fetchOverviewAnalytics();
-    } catch (err) {
-      console.error('Failed to set budget', err);
+    } catch (err: any) {
+      setBudgetSaveError(err?.response?.data?.message || 'Failed to save budget.');
     } finally {
       setIsSavingBudget(false);
     }
   };
 
-  const summary = overviewData?.summary || { totalIncome: 0, totalExpenses: 0, balance: 0, count: 0 };
-  const budget = overviewData?.budget || { budgetAmount: 0, remainingBudget: 0, overBudget: 0, percentageSpent: 0 };
-
-  // Unified list of categories with budget info
-  const combinedCategoryBudgets = useMemo(() => {
-    const list: CategoryBudgetDetail[] = [...(overviewData?.budget?.categories || [])];
-    const existingNames = new Set(list.map((c) => c.category));
-
-    // Candidate categories from dbCategories and standard list
-    const candidateNames = new Set([
-      ...dbCategories.map((c) => c.name),
-      'Investment',
-      'Food & Dining',
-      'Grocery',
-      'Snacks',
-      'Travel',
-      'Home',
-      'Salary',
-      'Medicine',
-      'Personal Care',
-      'Other',
-    ]);
-
-    candidateNames.forEach((catName) => {
-      if (!existingNames.has(catName)) {
-        list.push({
-          category: catName,
-          budgetAmount: 0,
-          spentAmount: 0,
-          remainingBudget: 0,
-          overBudget: 0,
-          percentageSpent: 0,
-          transactionCount: 0,
-        });
-        existingNames.add(catName);
-      }
-    });
-
-    // Sort: Budgeted categories first, then highest spent, then alphabetical
-    return list.sort((a, b) => {
-      if ((b.budgetAmount > 0 ? 1 : 0) !== (a.budgetAmount > 0 ? 1 : 0)) {
-        return (b.budgetAmount > 0 ? 1 : 0) - (a.budgetAmount > 0 ? 1 : 0);
-      }
-      if (b.spentAmount !== a.spentAmount) {
-        return b.spentAmount - a.spentAmount;
-      }
-      return a.category.localeCompare(b.category);
-    });
-  }, [overviewData?.budget?.categories, dbCategories]);
-
-  // Filtered categories for the dashboard view
-  const filteredCategoryBudgets = useMemo(() => {
-    return combinedCategoryBudgets.filter((cat) => {
-      if (budgetFilterTab === 'budgeted') return cat.budgetAmount > 0;
-      if (budgetFilterTab === 'unbudgeted') return cat.budgetAmount === 0 && cat.spentAmount > 0;
-      return true; // 'all'
-    });
-  }, [combinedCategoryBudgets, budgetFilterTab]);
-
-  // Categories filtered in modal search
-  const modalCategories = useMemo(() => {
-    if (!budgetModalSearch.trim()) return combinedCategoryBudgets;
-    const query = budgetModalSearch.toLowerCase().trim();
-    return combinedCategoryBudgets.filter((c) => c.category.toLowerCase().includes(query));
-  }, [combinedCategoryBudgets, budgetModalSearch]);
-
+  const budget = overviewData?.budget?.category === budgetCategory ? overviewData.budget : {
+    category: budgetCategory,
+    budgetAmount: 0,
+    actualAmount: 0,
+    incomeAmount: 0,
+    expenseAmount: 0,
+    incomeTransactionCount: 0,
+    expenseTransactionCount: 0,
+    transactionCount: 0,
+    remainingBudget: 0,
+    overBudget: 0,
+    percentageSpent: 0,
+  };
+  const isIncomeBudget = dbCategories.some((category) => category.name === budgetCategory && category.type === 'income');
+  const budgetStatus = budget.budgetAmount === 0
+    ? 'Not Set'
+    : isIncomeBudget
+      ? budget.overBudget > 0 ? 'Above Target' : budget.remainingBudget === 0 ? 'Target Met' : 'Below Target'
+      : budget.overBudget > 0 ? 'Over Budget' : 'Within Budget';
+  const budgetStatusColor = isIncomeBudget
+    ? budget.remainingBudget > 0 ? 'warning' : 'success'
+    : budget.overBudget > 0 ? 'error' : 'success';
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5, pb: 4 }}>
       {/* ---------------- 1. COMMON FILTER & BUDGET HEADER BAR ---------------- */}
@@ -508,22 +447,6 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
             </Select>
           </FormControl>
 
-          {/* Set Budget Action Button */}
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<EditRoundedIcon />}
-            onClick={() => handleOpenBudgetModal()}
-            sx={{
-              borderRadius: 2,
-              fontWeight: 600,
-              px: 2,
-              boxShadow: '0 4px 12px rgba(79, 70, 229, 0.25)',
-            }}
-          >
-            {budget.budgetAmount > 0 ? 'Edit Budgets' : 'Set Budgets'}
-          </Button>
-
           <IconButton onClick={fetchOverviewAnalytics} size="small" sx={{ border: '1px solid #e2e8f0', borderRadius: 2 }}>
             <RefreshRoundedIcon fontSize="small" />
           </IconButton>
@@ -538,7 +461,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
           gap: 2.5,
         }}
       >
-        {/* CARD 1: Monthly Budget */}
+        {/* CARD 1: Selected monthly or category budget */}
         <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 3.5, bgcolor: '#ffffff' }}>
           <CardContent sx={{ p: 2.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
@@ -564,119 +487,56 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
                 sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700 }}
               />
             </Box>
-            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-              Monthly Budget ({MONTH_NAMES.find((m) => m.value === commonMonth)?.label || 'All'})
-            </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.4, color: 'text.primary' }}>
-              {budget.budgetAmount > 0 ? formatCurrency(budget.budgetAmount) : '₹0'}
-            </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-              {budget.budgetAmount > 0 ? 'Starting baseline for expenses' : 'Click "Set Budget" to track'}
-            </Typography>
-          </CardContent>
-        </Card>
-
-        {/* CARD 2: Total Expenses (Categorized spend reduces budget) */}
-        <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 3.5, bgcolor: '#ffffff' }}>
-          <CardContent sx={{ p: 2.5 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-              <Box
-                sx={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 2.5,
-                  bgcolor: 'error.light',
-                  color: 'error.dark',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
+            <FormControl size="small" fullWidth sx={{ mb: 1.5 }}>
+              <InputLabel id="budget-category-label">Budget</InputLabel>
+              <Select
+                labelId="budget-category-label"
+                value={budgetCategory}
+                label="Budget"
+                onChange={(event) => setBudgetCategory(event.target.value)}
+                sx={{ borderRadius: 2 }}
               >
-                <ArrowUpwardRoundedIcon />
-              </Box>
-              {budget.budgetAmount > 0 && (
-                <Chip
-                  label={`${budget.percentageSpent}% spent`}
-                  size="small"
-                  color={budget.percentageSpent > 90 ? 'error' : budget.percentageSpent > 70 ? 'warning' : 'default'}
-                  sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700 }}
-                />
-              )}
-            </Box>
+                <MenuItem value="ALL">Monthly</MenuItem>
+                {dbCategories.map((category) => (
+                  <MenuItem key={category.id} value={category.name}>
+                    {category.name}
+                  </MenuItem>
+                ))}
+                {dbCategories.length === 0 && (
+                  <MenuItem disabled>No categories in master</MenuItem>
+                )}
+              </Select>
+            </FormControl>
             <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-              Total Expenses
+              {budgetCategory === 'ALL' ? 'Monthly Budget' : `${budgetCategory} Budget`}
+              {' - '}{MONTH_NAMES.find((m) => m.value === commonMonth)?.label || 'All Months'}
             </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.4, color: 'error.main' }}>
-              {formatCurrency(summary.totalExpenses)}
-            </Typography>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-              Deducted across {summary.count} transactions
-            </Typography>
-          </CardContent>
-        </Card>
-
-        {/* CARD 3: Remaining Budget (Budget - Expenses) */}
-        <Card
-          elevation={0}
-          sx={{
-            border: '1px solid #e2e8f0',
-            borderRadius: 3.5,
-            bgcolor: budget.overBudget > 0 ? 'rgba(239, 68, 68, 0.04)' : '#ffffff',
-          }}
-        >
-          <CardContent sx={{ p: 2.5 }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
-              <Box
-                sx={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 2.5,
-                  bgcolor: budget.overBudget > 0 ? 'error.light' : 'success.light',
-                  color: budget.overBudget > 0 ? 'error.dark' : 'success.dark',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                {budget.overBudget > 0 ? <WarningAmberRoundedIcon /> : <CheckCircleRoundedIcon />}
-              </Box>
-              <Chip
-                label={budget.overBudget > 0 ? 'Over Budget' : 'Within Budget'}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+              <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.4, color: 'text.primary' }}>
+                {budget.budgetAmount > 0 ? formatCurrency(budget.budgetAmount) : '₹0'}
+              </Typography>
+              <IconButton
                 size="small"
-                color={budget.overBudget > 0 ? 'error' : 'success'}
-                sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700 }}
-              />
+                onClick={() => handleOpenBudgetModal()}
+                disabled={commonYear === 'all' || commonMonth === 'all'}
+                aria-label={budget.budgetAmount > 0 ? 'Edit budget' : 'Set budget'}
+                sx={{ color: 'primary.main' }}
+              >
+                <EditRoundedIcon fontSize="small" />
+              </IconButton>
             </Box>
-            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-              Remaining Budget
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              {budget.budgetAmount > 0
+                ? 'Target for selected budget'
+                : commonYear === 'all' || commonMonth === 'all'
+                  ? 'Select one year and month to set a target'
+                  : 'Use the edit icon to set a target'}
             </Typography>
-            <Typography
-              variant="h5"
-              sx={{
-                fontWeight: 700,
-                mt: 0.4,
-                color: budget.overBudget > 0 ? 'error.main' : 'success.dark',
-              }}
-            >
-              {budget.overBudget > 0
-                ? `- ${formatCurrency(budget.overBudget)}`
-                : formatCurrency(budget.remainingBudget)}
-            </Typography>
-            {budget.budgetAmount > 0 && (
-              <Box sx={{ mt: 1 }}>
-                <LinearProgress
-                  variant="determinate"
-                  value={Math.min(100, budget.percentageSpent)}
-                  color={budget.overBudget > 0 ? 'error' : budget.percentageSpent > 80 ? 'warning' : 'primary'}
-                  sx={{ height: 6, borderRadius: 3 }}
-                />
-              </Box>
-            )}
           </CardContent>
         </Card>
 
-        {/* CARD 4: Total Income & Net Balance */}
-        <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 3.5, bgcolor: '#ffffff' }}>
+        {/* CARD 2: Income for the selected month or category */}
+        <Card elevation={0} sx={{ order: 2, border: '1px solid #e2e8f0', borderRadius: 3.5, bgcolor: '#ffffff' }}>
           <CardContent sx={{ p: 2.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
               <Box
@@ -693,298 +553,129 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
               >
                 <ArrowDownwardRoundedIcon />
               </Box>
+              {isIncomeBudget && budget.budgetAmount > 0 && (
+                <Chip
+                  label={`${budget.percentageSpent}% of target`}
+                  size="small"
+                  color="success"
+                  sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700 }}
+                />
+              )}
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+              {budgetCategory === 'ALL' ? 'Total Income' : `${budgetCategory} Income`}
+            </Typography>
+            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.4, color: 'success.dark' }}>
+              {formatCurrency(budget.incomeAmount)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+              {budget.incomeTransactionCount} matching income transactions
+            </Typography>
+          </CardContent>
+        </Card>
+
+        {/* CARD 4: Selected target minus matching transactions */}
+        <Card
+          elevation={0}
+          sx={{
+            order: 4,
+            border: '1px solid #e2e8f0',
+            borderRadius: 3.5,
+            bgcolor: budget.overBudget > 0 && !isIncomeBudget ? 'rgba(239, 68, 68, 0.04)' : '#ffffff',
+          }}
+        >
+          <CardContent sx={{ p: 2.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+              <Box
+                sx={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 2.5,
+                  bgcolor: `${budgetStatusColor}.light`,
+                  color: `${budgetStatusColor}.dark`,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {budgetStatusColor === 'error' || budgetStatusColor === 'warning'
+                  ? <WarningAmberRoundedIcon />
+                  : <CheckCircleRoundedIcon />}
+              </Box>
               <Chip
-                label={`Net: ${summary.balance >= 0 ? '+' : ''}${formatCurrency(summary.balance)}`}
+                label={budgetStatus}
                 size="small"
-                color={summary.balance >= 0 ? 'success' : 'error'}
-                variant="outlined"
+                color={budgetStatusColor}
                 sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700 }}
               />
             </Box>
             <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-              Total Income
+              {isIncomeBudget ? `${budgetCategory} Target Gap` : budgetCategory === 'ALL' ? 'Remaining Budget' : `${budgetCategory} Remaining`}
             </Typography>
-            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.4, color: 'success.dark' }}>
-              {formatCurrency(summary.totalIncome)}
+            <Typography
+              variant="h5"
+              sx={{
+                fontWeight: 700,
+                mt: 0.4,
+                color: `${budgetStatusColor}.dark`,
+              }}
+            >
+              {budget.overBudget > 0
+                ? `${isIncomeBudget ? '+' : '-'} ${formatCurrency(budget.overBudget)}`
+                : formatCurrency(budget.remainingBudget)}
+            </Typography>
+            {budget.budgetAmount > 0 && (
+              <Box sx={{ mt: 1 }}>
+                <LinearProgress
+                  variant="determinate"
+                  value={Math.min(100, budget.percentageSpent)}
+                  color={isIncomeBudget ? 'success' : budget.overBudget > 0 ? 'error' : budget.percentageSpent > 80 ? 'warning' : 'primary'}
+                  sx={{ height: 6, borderRadius: 3 }}
+                />
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* CARD 3: Expenses for the selected month or category */}
+        <Card elevation={0} sx={{ order: 3, border: '1px solid #e2e8f0', borderRadius: 3.5, bgcolor: '#ffffff' }}>
+          <CardContent sx={{ p: 2.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
+              <Box
+                sx={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 2.5,
+                  bgcolor: 'error.light',
+                  color: 'error.dark',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <ArrowUpwardRoundedIcon />
+              </Box>
+              {!isIncomeBudget && budget.budgetAmount > 0 && (
+                <Chip
+                  label={`${budget.percentageSpent}% of target`}
+                  size="small"
+                  color={budget.percentageSpent > 90 ? 'error' : budget.percentageSpent > 70 ? 'warning' : 'default'}
+                  sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700 }}
+                />
+              )}
+            </Box>
+            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+              {budgetCategory === 'ALL' ? 'Total Expenses' : `${budgetCategory} Expenses`}
+            </Typography>
+            <Typography variant="h5" sx={{ fontWeight: 700, mt: 0.4, color: 'error.main' }}>
+              {formatCurrency(budget.expenseAmount)}
             </Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-              Cash inflow in selected period
+              {budget.expenseTransactionCount} matching expense transactions
             </Typography>
           </CardContent>
         </Card>
       </Box>
-
-      {/* ---------------- 2.5 CATEGORY BUDGETS & LIVE SPENDING TRACKING ---------------- */}
-      <Paper
-        elevation={0}
-        sx={{
-          p: { xs: 2.5, sm: 3 },
-          borderRadius: 3.5,
-          border: '1px solid #e2e8f0',
-          bgcolor: '#ffffff',
-        }}
-      >
-        {/* Header Bar */}
-        <Box
-          sx={{
-            display: 'flex',
-            flexDirection: { xs: 'column', md: 'row' },
-            justifyContent: 'space-between',
-            alignItems: { xs: 'flex-start', md: 'center' },
-            gap: 2,
-            mb: 2.5,
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <Box
-              sx={{
-                width: 44,
-                height: 44,
-                borderRadius: 2.5,
-                bgcolor: 'rgba(79, 70, 229, 0.08)',
-                color: 'primary.main',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <AccountBalanceWalletRoundedIcon />
-            </Box>
-            <Box>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                Category Budgets & Live Deductions
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Budget limits and remaining balances for {MONTH_NAMES.find((m) => m.value === commonMonth)?.label || 'All Months'} {commonYear}
-              </Typography>
-            </Box>
-          </Box>
-
-          <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
-            <Box sx={{ display: 'flex', bgcolor: '#f1f5f9', p: 0.5, borderRadius: 2 }}>
-              <Chip
-                label="All"
-                size="small"
-                clickable
-                color={budgetFilterTab === 'all' ? 'primary' : 'default'}
-                variant={budgetFilterTab === 'all' ? 'filled' : 'outlined'}
-                onClick={() => setBudgetFilterTab('all')}
-                sx={{ border: 0, fontWeight: 600, fontSize: '0.75rem' }}
-              />
-              <Chip
-                label={`Budgeted (${combinedCategoryBudgets.filter((c) => c.budgetAmount > 0).length})`}
-                size="small"
-                clickable
-                color={budgetFilterTab === 'budgeted' ? 'primary' : 'default'}
-                variant={budgetFilterTab === 'budgeted' ? 'filled' : 'outlined'}
-                onClick={() => setBudgetFilterTab('budgeted')}
-                sx={{ border: 0, fontWeight: 600, fontSize: '0.75rem' }}
-              />
-              <Chip
-                label="Unbudgeted Spend"
-                size="small"
-                clickable
-                color={budgetFilterTab === 'unbudgeted' ? 'primary' : 'default'}
-                variant={budgetFilterTab === 'unbudgeted' ? 'filled' : 'outlined'}
-                onClick={() => setBudgetFilterTab('unbudgeted')}
-                sx={{ border: 0, fontWeight: 600, fontSize: '0.75rem' }}
-              />
-            </Box>
-
-            <Button
-              variant="outlined"
-              size="small"
-              startIcon={<EditRoundedIcon />}
-              onClick={() => handleOpenBudgetModal()}
-              sx={{
-                borderRadius: 2,
-                fontWeight: 600,
-                textTransform: 'none',
-                borderColor: '#cbd5e1',
-                color: 'text.primary',
-                '&:hover': { borderColor: 'primary.main', bgcolor: 'rgba(79, 70, 229, 0.04)' },
-              }}
-            >
-              Manage Targets
-            </Button>
-          </Box>
-        </Box>
-
-        {/* Categories Grid */}
-        {filteredCategoryBudgets.length === 0 ? (
-          <Box
-            sx={{
-              py: 5,
-              textAlign: 'center',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 1.5,
-              bgcolor: '#f8fafc',
-              borderRadius: 3,
-              border: '1px dashed #cbd5e1',
-            }}
-          >
-            <AccountBalanceWalletRoundedIcon sx={{ fontSize: 40, color: '#94a3b8' }} />
-            <Typography variant="body1" sx={{ fontWeight: 600, color: 'text.secondary' }}>
-              No category budgets matching this filter
-            </Typography>
-            <Button
-              variant="contained"
-              size="small"
-              startIcon={<AddRoundedIcon />}
-              onClick={() => handleOpenBudgetModal()}
-              sx={{ borderRadius: 2, textTransform: 'none', fontWeight: 600 }}
-            >
-              Set Category Budgets
-            </Button>
-          </Box>
-        ) : (
-          <Box
-            sx={{
-              display: 'grid',
-              gridTemplateColumns: {
-                xs: '1fr',
-                sm: 'repeat(2, 1fr)',
-                md: 'repeat(3, 1fr)',
-                xl: 'repeat(4, 1fr)',
-              },
-              gap: 2,
-            }}
-          >
-            {filteredCategoryBudgets.map((item) => {
-              const hasBudget = item.budgetAmount > 0;
-              const isOver = item.overBudget > 0;
-              const pct = hasBudget ? item.percentageSpent : 0;
-              const progressColor = isOver ? '#ef4444' : pct > 75 ? '#f59e0b' : '#10b981';
-
-              return (
-                <Paper
-                  key={item.category}
-                  elevation={0}
-                  sx={{
-                    p: 2,
-                    borderRadius: 3,
-                    border: '1px solid',
-                    borderColor: isOver ? 'rgba(239, 68, 68, 0.3)' : hasBudget ? '#e2e8f0' : '#f1f5f9',
-                    bgcolor: isOver ? 'rgba(239, 68, 68, 0.02)' : '#ffffff',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    gap: 1.5,
-                    transition: 'all 0.2s',
-                    '&:hover': {
-                      borderColor: isOver ? 'error.main' : 'primary.light',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.04)',
-                    },
-                  }}
-                >
-                  {/* Top: Category Title & Status Chip */}
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 1 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <CategoryRoundedIcon
-                        fontSize="small"
-                        sx={{ color: isOver ? 'error.main' : hasBudget ? 'primary.main' : 'text.disabled' }}
-                      />
-                      <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                        {item.category}
-                      </Typography>
-                    </Box>
-
-                    {hasBudget ? (
-                      <Chip
-                        label={isOver ? `Over: ₹${Math.round(item.overBudget).toLocaleString('en-IN')}` : `${pct}% spent`}
-                        size="small"
-                        color={isOver ? 'error' : pct > 75 ? 'warning' : 'success'}
-                        variant={isOver ? 'filled' : 'outlined'}
-                        sx={{ height: 20, fontSize: '0.68rem', fontWeight: 700 }}
-                      />
-                    ) : (
-                      <Chip
-                        label="No Target"
-                        size="small"
-                        variant="outlined"
-                        sx={{ height: 20, fontSize: '0.68rem', color: 'text.disabled', borderColor: '#e2e8f0' }}
-                      />
-                    )}
-                  </Box>
-
-                  {/* Middle: Spending & Remaining Numbers */}
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                    <Box>
-                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontSize: '0.72rem' }}>
-                        Target Budget:
-                      </Typography>
-                      <Typography variant="body2" sx={{ fontWeight: 700, color: hasBudget ? 'text.primary' : 'text.disabled' }}>
-                        {hasBudget ? formatCurrency(item.budgetAmount) : 'Not set'}
-                      </Typography>
-                    </Box>
-
-                    <Box sx={{ textAlign: 'right' }}>
-                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontSize: '0.72rem' }}>
-                        Spent: {formatCurrency(item.spentAmount)}
-                      </Typography>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          fontWeight: 700,
-                          color: isOver ? 'error.main' : hasBudget ? 'success.dark' : 'text.secondary',
-                        }}
-                      >
-                        {hasBudget
-                          ? isOver
-                            ? `Exceeded by ${formatCurrency(item.overBudget)}`
-                            : `${formatCurrency(item.remainingBudget)} left`
-                          : `${item.transactionCount || 0} transactions`}
-                      </Typography>
-                    </Box>
-                  </Box>
-
-                  {/* Visual Progress Bar */}
-                  {hasBudget ? (
-                    <Box sx={{ width: '100%' }}>
-                      <LinearProgress
-                        variant="determinate"
-                        value={Math.min(100, pct)}
-                        sx={{
-                          height: 6,
-                          borderRadius: 3,
-                          bgcolor: '#f1f5f9',
-                          '& .MuiLinearProgress-bar': {
-                            bgcolor: progressColor,
-                            borderRadius: 3,
-                          },
-                        }}
-                      />
-                    </Box>
-                  ) : (
-                    <Box sx={{ height: 6 }} />
-                  )}
-
-                  {/* Bottom: Quick Edit Target Button */}
-                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', pt: 0.5, borderTop: '1px solid #f8fafc' }}>
-                    <Button
-                      size="small"
-                      startIcon={<EditRoundedIcon sx={{ fontSize: '0.85rem !important' }} />}
-                      onClick={() => handleOpenBudgetModal(item.category)}
-                      sx={{
-                        fontSize: '0.72rem',
-                        textTransform: 'none',
-                        p: 0,
-                        minWidth: 0,
-                        color: 'primary.main',
-                        fontWeight: 600,
-                      }}
-                    >
-                      {hasBudget ? 'Edit Target' : '+ Set Target'}
-                    </Button>
-                  </Box>
-                </Paper>
-              );
-            })}
-          </Box>
-        )}
-      </Paper>
 
       {/* ---------------- 3. BOTH CHARTS IN SINGLE COLUMN (FULL WIDTH) ---------------- */}
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5 }}>
@@ -1498,243 +1189,46 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
         </Paper>
       </Box>
 
-      {/* ---------------- 4. SET / EDIT MONTHLY BUDGET DIALOG ---------------- */}
+      {/* Edit the selected budget target */}
       <Dialog
         open={isBudgetModalOpen}
         onClose={() => setIsBudgetModalOpen(false)}
-        maxWidth="sm"
+        maxWidth="xs"
         fullWidth
-        slotProps={{
-          paper: {
-            sx: { borderRadius: 3.5, p: 1 },
-          },
-        }}
+        slotProps={{ paper: { sx: { borderRadius: 3.5, p: 1 } } }}
       >
-        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', pb: 1 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <AccountBalanceWalletRoundedIcon color="primary" />
-            <Box>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                Set Budget by Month & Category
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Period: <strong>{MONTH_NAMES.find((m) => m.value === commonMonth)?.label || 'All Months'} {commonYear}</strong>
-              </Typography>
-            </Box>
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 700 }}>
+              Set {budgetCategory === 'ALL' ? 'Monthly' : budgetCategory} Budget
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {MONTH_NAMES.find((m) => m.value === commonMonth)?.label} {commonYear}
+            </Typography>
           </Box>
-          <IconButton size="small" onClick={() => setIsBudgetModalOpen(false)}>
+          <IconButton size="small" onClick={() => setIsBudgetModalOpen(false)} aria-label="Close budget dialog">
             <CloseRoundedIcon fontSize="small" />
           </IconButton>
         </DialogTitle>
-
-        <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: 1.5, maxHeight: '70vh' }}>
-          {/* Top Section: Overall Monthly Budget */}
-          <Paper
-            elevation={0}
-            sx={{
-              p: 2,
-              borderRadius: 2.5,
-              bgcolor: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 1.5,
-            }}
-          >
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                Overall Monthly Target
-              </Typography>
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={handleAutoSumCategories}
-                sx={{
-                  textTransform: 'none',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  borderRadius: 1.5,
-                  p: '2px 8px',
-                }}
-              >
-                ⚡ Auto-Sum Categories
-              </Button>
-            </Box>
-
-            <TextField
-              label="Total Target Budget (INR)"
-              fullWidth
-              size="small"
-              type="number"
-              value={budgetInput}
-              onChange={(e) => setBudgetInput(e.target.value)}
-              slotProps={{
-                input: {
-                  startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-                },
-              }}
-              sx={{ bgcolor: '#ffffff', '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
-            />
-
-            <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap' }}>
-              {[30000, 50000, 75000, 100000].map((preset) => (
-                <Chip
-                  key={preset}
-                  label={`₹${(preset / 1000).toFixed(0)}k`}
-                  clickable
-                  onClick={() => setBudgetInput(String(preset))}
-                  variant={budgetInput === String(preset) ? 'filled' : 'outlined'}
-                  color="primary"
-                  size="small"
-                  sx={{ fontWeight: 600 }}
-                />
-              ))}
-            </Box>
-          </Paper>
-
-          <Divider sx={{ my: 0.5 }}>
-            <Chip label="Category-Specific Limits" size="small" sx={{ fontWeight: 600, fontSize: '0.75rem' }} />
-          </Divider>
-
-          {/* Search Category */}
+        <DialogContent sx={{ pt: 2 }}>
           <TextField
-            placeholder="Search category (e.g. Investment, Food, Snacks...)"
-            size="small"
+            label="Budget target (INR)"
             fullWidth
-            value={budgetModalSearch}
-            onChange={(e) => setBudgetModalSearch(e.target.value)}
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchRoundedIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-                  </InputAdornment>
-                ),
-              },
+            type="number"
+            value={budgetInput}
+            onChange={(event) => {
+              setBudgetInput(event.target.value);
+              setBudgetSaveError('');
             }}
-            sx={{ '& .MuiOutlinedInput-root': { borderRadius: 2 } }}
+            error={Boolean(budgetSaveError)}
+            helperText={budgetSaveError || `${formatCurrency(budget.actualAmount)} across matching transactions`}
+            slotProps={{ htmlInput: { min: 0, step: 0.01 } }}
           />
-
-          {/* List of Categories with input for each */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, overflowY: 'auto', pr: 0.5 }}>
-            {modalCategories.map((catItem) => {
-              const currentVal = categoryBudgetInputs[catItem.category] ?? '';
-              const numVal = parseFloat(currentVal) || 0;
-
-              return (
-                <Box
-                  key={catItem.category}
-                  sx={{
-                    p: 1.5,
-                    borderRadius: 2,
-                    border: '1px solid',
-                    borderColor: numVal > 0 ? 'primary.light' : '#f1f5f9',
-                    bgcolor: numVal > 0 ? 'rgba(79, 70, 229, 0.02)' : '#ffffff',
-                    display: 'flex',
-                    flexDirection: { xs: 'column', sm: 'row' },
-                    alignItems: { xs: 'stretch', sm: 'center' },
-                    justifyContent: 'space-between',
-                    gap: 1.5,
-                  }}
-                >
-                  <Box sx={{ minWidth: 140 }}>
-                    <Typography variant="body2" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                      {catItem.category}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Spent this month: {formatCurrency(catItem.spentAmount)}
-                    </Typography>
-                  </Box>
-
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, justifyContent: 'flex-end' }}>
-                    <TextField
-                      size="small"
-                      placeholder="e.g. 5000"
-                      type="number"
-                      value={currentVal}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCategoryBudgetInputs((prev) => ({
-                          ...prev,
-                          [catItem.category]: val,
-                        }));
-                      }}
-                      slotProps={{
-                        input: {
-                          startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-                        },
-                      }}
-                      sx={{
-                        width: 140,
-                        bgcolor: '#ffffff',
-                        '& .MuiOutlinedInput-root': { borderRadius: 2 },
-                      }}
-                    />
-
-                    {/* Quick Preset Buttons */}
-                    <Box sx={{ display: 'flex', gap: 0.5 }}>
-                      <Chip
-                        label="+1k"
-                        size="small"
-                        clickable
-                        onClick={() => {
-                          const next = numVal + 1000;
-                          setCategoryBudgetInputs((prev) => ({
-                            ...prev,
-                            [catItem.category]: String(next),
-                          }));
-                        }}
-                        sx={{ fontSize: '0.7rem', fontWeight: 600, height: 24 }}
-                      />
-                      <Chip
-                        label="+5k"
-                        size="small"
-                        clickable
-                        onClick={() => {
-                          const next = numVal + 5000;
-                          setCategoryBudgetInputs((prev) => ({
-                            ...prev,
-                            [catItem.category]: String(next),
-                          }));
-                        }}
-                        sx={{ fontSize: '0.7rem', fontWeight: 600, height: 24 }}
-                      />
-                      {numVal > 0 && (
-                        <Chip
-                          label="✕"
-                          size="small"
-                          clickable
-                          onClick={() => {
-                            setCategoryBudgetInputs((prev) => {
-                              const copy = { ...prev };
-                              delete copy[catItem.category];
-                              return copy;
-                            });
-                          }}
-                          sx={{ fontSize: '0.7rem', height: 24 }}
-                        />
-                      )}
-                    </Box>
-                  </Box>
-                </Box>
-              );
-            })}
-          </Box>
         </DialogContent>
-
-        <DialogActions sx={{ px: 3, pb: 2, pt: 1, borderTop: '1px solid #f1f5f9' }}>
-          <Button onClick={() => setIsBudgetModalOpen(false)} sx={{ fontWeight: 600 }}>
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={handleSaveBudget}
-            disabled={isSavingBudget}
-            startIcon={isSavingBudget ? <CircularProgress size={16} color="inherit" /> : <SavingsRoundedIcon />}
-            sx={{ fontWeight: 600, px: 3, borderRadius: 2 }}
-          >
-            {isSavingBudget ? 'Saving...' : 'Save Budgets'}
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setIsBudgetModalOpen(false)}>Cancel</Button>
+          <Button variant="contained" onClick={handleSaveBudget} disabled={isSavingBudget}>
+            {isSavingBudget ? <CircularProgress size={18} color="inherit" /> : 'Save Budget'}
           </Button>
         </DialogActions>
       </Dialog>

@@ -193,7 +193,7 @@ export const getTransactionSummary = async () => {
 };
 
 export const getTransactionAnalytics = async (filters = {}) => {
-    const { year, month, date } = filters;
+    const { year, month, date, budgetCategory = 'ALL' } = filters;
     const where = {};
 
     if (date && date !== 'all') {
@@ -290,80 +290,38 @@ export const getTransactionAnalytics = async (filters = {}) => {
       expense: Math.round(entry.expense * 100) / 100,
     }));
 
-    // 4. Budget Calculation for Selected Month (Overall + Category-wise)
+    // 4. Budget for the selected monthly or master-category scope
     let budgetAmount = 0;
-    let categoryBudgetsList = [];
-
+    const budgetTransactions = budgetCategory === 'ALL'
+      ? txs.filter((t) => t.type === 'expense')
+      : txs.filter((t) => t.category === budgetCategory);
+    const budgetIncomeTransactions = budgetTransactions.filter((t) => t.type === 'income');
+    const budgetExpenseTransactions = budgetTransactions.filter((t) => t.type === 'expense');
+    const budgetIncome = budgetIncomeTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const budgetExpenses = budgetExpenseTransactions.reduce((sum, t) => sum + t.amount, 0);
+    const selectedCategory = budgetCategory === 'ALL'
+      ? null
+      : await prisma.category.findUnique({ where: { name: budgetCategory }, select: { type: true } });
+    const budgetSpent = selectedCategory?.type === 'income' ? budgetIncome : budgetExpenses;
+    const budgetTransactionCount = budgetCategory === 'ALL'
+      ? budgetExpenseTransactions.length
+      : selectedCategory?.type === 'income'
+        ? budgetIncomeTransactions.length
+        : budgetExpenseTransactions.length;
     if (year && year !== 'all' && month && month !== 'all') {
       const y = parseInt(year, 10);
       const m = parseInt(month, 10);
-
-      // Fetch all budget records for this month
-      let budgetRecords = [];
-      try {
-        budgetRecords = await prisma.budget.findMany({
-          where: { year: y, month: m },
-        });
-      } catch (e) {
-        budgetRecords = [];
-      }
-
-      const overallRecord = budgetRecords.find((b) => !b.category || b.category === 'ALL');
-      const catBudgetMap = {};
-      for (const b of budgetRecords) {
-        if (b.category && b.category !== 'ALL') {
-          catBudgetMap[b.category] = b.amount;
-        }
-      }
-
-      // If overall budget is set, use it; otherwise sum of category budgets
-      const sumCatBudgets = Object.values(catBudgetMap).reduce((acc, v) => acc + v, 0);
-      budgetAmount = overallRecord ? overallRecord.amount : sumCatBudgets;
-
-      // Get system categories to display in budget breakdown even if no expenses yet
-      let allCategoriesList = [];
-      try {
-        const dbCats = await prisma.category.findMany({ select: { name: true, type: true } });
-        allCategoriesList = dbCats.filter((c) => c.type !== 'income').map((c) => c.name);
-      } catch (e) {
-        allCategoriesList = [];
-      }
-
-      // Combine category names from expenses, budget records, and Category table
-      const allCategoryNames = new Set([
-        ...Object.keys(catMap),
-        ...Object.keys(catBudgetMap),
-        ...allCategoriesList,
-      ]);
-
-      categoryBudgetsList = Array.from(allCategoryNames).map((catName) => {
-        const catBudget = catBudgetMap[catName] || 0;
-        const spent = catMap[catName]?.value || 0;
-        const remaining = Math.max(0, catBudget - spent);
-        const over = catBudget > 0 && spent > catBudget ? spent - catBudget : 0;
-        const pct = catBudget > 0 ? Math.round((spent / catBudget) * 100) : 0;
-
-        return {
-          category: catName,
-          budgetAmount: Math.round(catBudget * 100) / 100,
-          spentAmount: Math.round(spent * 100) / 100,
-          remainingBudget: Math.round(remaining * 100) / 100,
-          overBudget: Math.round(over * 100) / 100,
-          percentageSpent: pct,
-          transactionCount: catMap[catName]?.count || 0,
-        };
+      const budgetRecord = await prisma.budget.findUnique({
+        where: {
+          year_month_category: { year: y, month: m, category: budgetCategory },
+        },
       });
-
-      // Sort categories: budgeted categories first, then highest spent
-      categoryBudgetsList.sort((a, b) => {
-        if (b.budgetAmount !== a.budgetAmount) return b.budgetAmount - a.budgetAmount;
-        return b.spentAmount - a.spentAmount;
-      });
+      budgetAmount = budgetRecord?.amount || 0;
     }
 
-    const remainingBudget = Math.max(0, budgetAmount - totalExpenses);
-    const overBudget = totalExpenses > budgetAmount && budgetAmount > 0 ? totalExpenses - budgetAmount : 0;
-    const percentageSpent = budgetAmount > 0 ? Math.min(100, Math.round((totalExpenses / budgetAmount) * 100)) : 0;
+    const remainingBudget = Math.max(0, budgetAmount - budgetSpent);
+    const overBudget = budgetSpent > budgetAmount && budgetAmount > 0 ? budgetSpent - budgetAmount : 0;
+    const percentageSpent = budgetAmount > 0 ? Math.min(100, Math.round((budgetSpent / budgetAmount) * 100)) : 0;
 
     // 5. Distinct dates in database for filter dropdowns
     const allDates = await prisma.transaction.findMany({
@@ -392,11 +350,17 @@ export const getTransactionAnalytics = async (filters = {}) => {
         count: txs.length,
       },
       budget: {
+        category: budgetCategory,
         budgetAmount: Math.round(budgetAmount * 100) / 100,
+        actualAmount: Math.round(budgetSpent * 100) / 100,
+        incomeAmount: Math.round(budgetIncome * 100) / 100,
+        expenseAmount: Math.round(budgetExpenses * 100) / 100,
+        incomeTransactionCount: budgetIncomeTransactions.length,
+        expenseTransactionCount: budgetExpenseTransactions.length,
+        transactionCount: budgetTransactionCount,
         remainingBudget: Math.round(remainingBudget * 100) / 100,
         overBudget: Math.round(overBudget * 100) / 100,
         percentageSpent,
-        categories: categoryBudgetsList,
       },
       categoryBreakdown,
       timeSeries,

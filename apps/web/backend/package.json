@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node --watch src/server.js",
-    "start": "node src/server.js",
+    "dev": "prisma generate && node --watch src/server.js",
+    "start": "prisma generate && node src/server.js",
+    "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
+    "test": "node --test",
     "prisma:push": "prisma db push",
     "prisma:seed": "node prisma/seed.js",
     "seed:user": "node prisma/seed-user.js"
@@ -17,9 +19,7 @@
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "multer": "^2.4.0",
+    "prisma": "^6.19.3",
     "xlsx": "^0.18.5"
-  },
-  "devDependencies": {
-    "prisma": "^6.4.1"
   }
 }

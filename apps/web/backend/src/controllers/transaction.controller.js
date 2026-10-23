@@ -117,8 +117,8 @@ export const getSummary = async (_req, res) => {
 
 export const getAnalytics = async (req, res) => {
   try {
-    const { year, month, date } = req.query;
-    const analytics = await transactionService.getAnalytics({ year, month, date });
+    const { year, month, date, budgetCategory } = req.query;
+    const analytics = await transactionService.getAnalytics({ year, month, date, budgetCategory });
     res.json({ success: true, data: analytics });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

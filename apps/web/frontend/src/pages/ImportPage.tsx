@@ -21,6 +21,8 @@ import {
   FormControl,
   Alert,
   CircularProgress,
+  LinearProgress,
+  Backdrop,
   Tooltip,
   Card,
   CardContent,
@@ -37,7 +39,7 @@ import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
 import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
 import BlockRoundedIcon from '@mui/icons-material/BlockRounded';
 
-import { importService, ImportPreviewResponse, ParsedTransactionPreview } from '../services/import.service';
+import { importService, IMPORT_BATCH_SIZE, importTimeout, ImportPreviewResponse, ImportProgress, ParsedTransactionPreview } from '../services/import.service';
 import { categoryService } from '../services/category.service';
 import { CategoryItem } from '../types/category';
 import { SAMPLE_ICICI_STATEMENT } from '../data/sampleStatement';
@@ -59,6 +61,8 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
   const [file, setFile] = useState<File | null>(null);
   const [rawCsvText, setRawCsvText] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
+  const [loadingStage, setLoadingStage] = useState<'preview' | 'import' | null>(null);
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Preview Result
@@ -103,6 +107,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
 
     try {
       setLoading(true);
+      setLoadingStage('preview');
       setError(null);
       const res = await importService.preview(file, rawCsvText || undefined);
       setPreviewData(res);
@@ -112,6 +117,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
       setError(err?.response?.data?.message || err?.message || 'Failed to parse statement');
     } finally {
       setLoading(false);
+      setLoadingStage(null);
     }
   };
 
@@ -160,17 +166,26 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
   const handleConfirmImport = async () => {
     try {
       setLoading(true);
+      setLoadingStage('import');
+      setImportProgress({ completed: 0, total: selectedCount, imported: 0, batch: 1, batchCount: Math.ceil(selectedCount / IMPORT_BATCH_SIZE) });
       setError(null);
-      const res = await importService.confirm(transactions, true);
+      const res = await importService.confirm(transactions, true, setImportProgress);
       setImportResult({
         importedCount: res.importedCount,
         totalReceived: res.totalReceived,
       });
       setActiveStep(3); // Step 4 Complete
     } catch (err: any) {
-      setError(err?.response?.data?.message || err?.message || 'Failed to import transactions');
+      const progress = err?.importProgress as ImportProgress | undefined;
+      const detail = err?.code === 'ECONNABORTED'
+        ? 'The current batch timed out. It may still finish on the server; review the ledger before retrying. Retrying skips transactions already saved.'
+        : err?.response?.data?.message || err?.message || 'Failed to import transactions';
+      setError(progress && progress.completed > 0
+        ? `${progress.completed} of ${progress.total} rows were confirmed before the error. ${detail}`
+        : detail);
     } finally {
       setLoading(false);
+      setLoadingStage(null);
     }
   };
 
@@ -180,6 +195,23 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5, pb: 6 }}>
+      <Backdrop open={loading} sx={{ zIndex: (theme) => theme.zIndex.modal + 1, color: '#fff', flexDirection: 'column', gap: 2 }}>
+        <CircularProgress color="inherit" size={42} />
+        <Typography variant="h6" sx={{ fontWeight: 700 }}>
+          {loadingStage === 'preview' ? 'Reading and checking statement…' : 'Importing transactions…'}
+        </Typography>
+        {loadingStage === 'import' && importProgress && (
+          <Box sx={{ width: 'min(360px, 85vw)', textAlign: 'center' }}>
+            <LinearProgress variant="determinate" value={importProgress.total > 0 ? importProgress.completed / importProgress.total * 100 : 0} sx={{ height: 8, borderRadius: 4 }} />
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              {importProgress.completed} of {importProgress.total} rows confirmed
+            </Typography>
+            <Typography variant="caption">
+              Batch {Math.min(importProgress.batch, importProgress.batchCount)} of {importProgress.batchCount} · up to {Math.ceil(importTimeout(Math.min(IMPORT_BATCH_SIZE, importProgress.total)) / 1000)} seconds per batch
+            </Typography>
+          </Box>
+        )}
+      </Backdrop>
       {/* Top Header Card */}
       <Paper
         elevation={0}

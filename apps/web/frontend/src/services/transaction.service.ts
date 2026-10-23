@@ -67,22 +67,18 @@ export interface TimeSeriesItem {
   expense: number;
 }
 
-export interface CategoryBudgetDetail {
+export interface BudgetInfo {
   category: string;
   budgetAmount: number;
-  spentAmount: number;
+  actualAmount: number;
+  incomeAmount: number;
+  expenseAmount: number;
+  incomeTransactionCount: number;
+  expenseTransactionCount: number;
+  transactionCount: number;
   remainingBudget: number;
   overBudget: number;
   percentageSpent: number;
-  transactionCount?: number;
-}
-
-export interface BudgetInfo {
-  budgetAmount: number;
-  remainingBudget: number;
-  overBudget: number;
-  percentageSpent: number;
-  categories?: CategoryBudgetDetail[];
 }
 
 export interface AnalyticsData {
@@ -106,6 +102,7 @@ export interface GetAnalyticsQuery {
   year?: string;
   month?: string;
   date?: string;
+  budgetCategory?: string;
 }
 
 export interface CreateTransactionDto {

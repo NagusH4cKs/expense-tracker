@@ -1,4 +1,4 @@
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -6,33 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isWindows = process.platform === 'win32';
-const npmRunDev = isWindows ? 'npm.cmd run dev' : 'npm run dev';
-
-function freePort(port) {
-  try {
-    if (isWindows) {
-      const output = execSync(`netstat -ano | findstr :${port}`, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-      const lines = output.trim().split('\n');
-      for (const line of lines) {
-        if (line.includes('LISTENING')) {
-          const parts = line.trim().split(/\s+/);
-          const pid = parts[parts.length - 1];
-          if (pid && pid !== '0' && pid !== String(process.pid)) {
-            execSync(`taskkill /pid ${pid} /f /t`, { stdio: 'ignore' });
-          }
-        }
-      }
-    } else {
-      execSync(`fuser -k ${port}/tcp 2>/dev/null || true`, { stdio: 'ignore' });
-    }
-  } catch (e) {
-    // Ignore if no process was running
-  }
-}
-
-// Pre-flight cleanup: Ensure default ports 5000 and 5173 are free
-freePort(5000);
-freePort(5173);
+const npmCommand = isWindows ? 'npm.cmd' : 'npm';
 
 console.log('\x1b[36m%s\x1b[0m', '==================================================');
 console.log('\x1b[36m%s\x1b[0m', '🚀 Starting Expense Tracker (Backend + Frontend)...');
@@ -40,8 +14,8 @@ console.log('\x1b[36m%s\x1b[0m', '==============================================
 
 const processes = [];
 
-function startProcess(name, cwd, colorCode) {
-  const proc = spawn(npmRunDev, {
+function startProcess(name, cwd, script, colorCode) {
+  const proc = spawn(npmCommand, ['run', script], {
     cwd,
     shell: true,
     stdio: ['inherit', 'pipe', 'pipe'],
@@ -80,10 +54,10 @@ function startProcess(name, cwd, colorCode) {
 }
 
 // 1. Start Backend (Color 35 = Magenta)
-startProcess('Backend', path.join(__dirname, 'backend'), '35');
+startProcess('Backend', path.join(__dirname, 'backend'), 'dev', '35');
 
 // 2. Start Frontend (Color 36 = Cyan)
-startProcess('Frontend', path.join(__dirname, 'frontend'), '36');
+startProcess('Frontend', path.join(__dirname, 'frontend'), 'dev:vite', '36');
 
 // Clean exit on termination
 function cleanup() {
