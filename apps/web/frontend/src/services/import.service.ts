@@ -14,10 +14,17 @@ export interface ParsedTransactionPreview {
   reference: string;
   category: string;
   group: string | null;
-  isNewGroup: boolean;
+  isNewGroup?: boolean;
   confidence: string;
+  needsReview?: boolean;
+  matchedRuleId?: string | null;
+  isTransfer?: boolean;
+  transferStatus?: 'linked' | 'one_sided' | null;
+  transferLinkedId?: string | null;
+  excludeFromReport?: boolean;
+  duplicateStatus?: 'none' | 'possible' | 'confirmed';
+  duplicateReason?: string | null;
   isDuplicate: boolean;
-  duplicateReason: string | null;
   selected: boolean;
 }
 
@@ -26,6 +33,9 @@ export interface ImportPreviewResponse {
   totalRows: number;
   newItemsCount: number;
   duplicatesCount: number;
+  possibleDuplicatesCount?: number;
+  needsReviewCount?: number;
+  transfersCount?: number;
   detectedColumns: {
     dateIdx: number;
     remarksIdx: number;

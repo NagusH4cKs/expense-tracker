@@ -30,23 +30,49 @@ model Group {
 }
 
 model Transaction {
-  id          String   @id @default(uuid())
-  date        String
-  description String
-  remarks     String?
-  category    String
-  group       String?
-  amount      Float
-  type        String   // "expense" | "income"
-  account     String
-  reference   String?  @unique
-  balance     Float?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                String   @id @default(uuid())
+  date              String
+  description       String
+  remarks           String?
+  category          String
+  group             String?
+  amount            Float
+  type              String   // "expense" | "income"
+  account           String
+  reference         String?  @unique
+  balance           Float?
+  needsReview       Boolean  @default(false)
+  confidence        String?  @default("rule") // "high" | "rule" | "low" | "manual"
+  matchedRuleId     String?
+  isTransfer        Boolean  @default(false)
+  transferLinkedId  String?
+  transferStatus    String?  // "linked" | "one_sided"
+  excludeFromReport Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([category])
   @@index([account])
   @@index([date])
+  @@index([needsReview])
+  @@index([isTransfer])
+}
+
+model CategorizationRule {
+  id            String   @id @default(uuid())
+  pattern       String   // e.g. "tea, coffee, snacks, juice", "F ", "home", "zerodha"
+  matchType     String   @default("contains") // "contains" | "exact" | "prefix" | "regex"
+  category      String
+  group         String?
+  priority      Int      @default(0)
+  bank          String?  @default("ALL") // "ICICI", "SBI", "ALL"
+  isActive      Boolean  @default(true)
+  isUserCreated Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([priority])
+  @@index([isActive])
 }
 
 model Budget {

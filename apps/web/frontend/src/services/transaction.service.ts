@@ -5,23 +5,22 @@ export interface TransactionItem {
   id: string;
   date: string;
   description: string;
-  remarks?: string | null;
   category: string;
   group?: string | null;
   amount: number;
   type: 'expense' | 'income';
   account: string;
   reference?: string | null;
+  remarks?: string | null;
   balance?: number | null;
+  needsReview?: boolean;
+  confidence?: string | null;
+  isTransfer?: boolean;
+  transferLinkedId?: string | null;
+  transferStatus?: string | null;
+  excludeFromReport?: boolean;
   createdAt?: string;
   updatedAt?: string;
-}
-
-export interface TransactionSummary {
-  totalIncome: number;
-  totalExpenses: number;
-  balance: number;
-  count: number;
 }
 
 export interface PaginationMeta {
@@ -42,21 +41,24 @@ export interface GetTransactionsQuery {
   page?: number;
   limit?: number;
   category?: string;
-  search?: string;
-  type?: string;
+  type?: 'expense' | 'income';
   account?: string;
+  search?: string;
   startDate?: string;
   endDate?: string;
-  date?: string;
-  month?: string;
   year?: string;
+  month?: string;
+  date?: string;
+  needsReview?: string | boolean;
+  isTransfer?: string | boolean;
+  excludeFromReport?: string | boolean;
 }
 
 export interface CategoryBreakdownItem {
   name: string;
   value: number;
-  count: number;
   percentage: number;
+  count: number;
 }
 
 export interface TimeSeriesItem {
@@ -79,6 +81,22 @@ export interface BudgetInfo {
   remainingBudget: number;
   overBudget: number;
   percentageSpent: number;
+  totalCategoryBudget?: number;
+  monthlyAllBudget?: number;
+  isTalliedFromCategories?: boolean;
+}
+
+export interface CategoryFinancialItem {
+  categoryId: string;
+  category: string;
+  type: 'expense' | 'income' | 'transfer';
+  budgetAmount: number;
+  incomeAmount: number;
+  expenseAmount: number;
+  remainingBudget: number;
+  overBudget: number;
+  percentageSpent: number;
+  transactionCount: number;
 }
 
 export interface AnalyticsData {
@@ -89,6 +107,7 @@ export interface AnalyticsData {
     count: number;
   };
   budget: BudgetInfo;
+  categoryFinancials?: CategoryFinancialItem[];
   categoryBreakdown: CategoryBreakdownItem[];
   timeSeries: TimeSeriesItem[];
   filters: {
@@ -115,6 +134,13 @@ export interface CreateTransactionDto {
   account: string;
   remarks?: string | null;
   reference?: string | null;
+  needsReview?: boolean;
+  isTransfer?: boolean;
+  excludeFromReport?: boolean;
+  saveAsRule?: boolean;
+  rulePattern?: string;
+  ruleMatchType?: 'contains' | 'exact' | 'prefix' | 'regex';
+  rulePriority?: number;
 }
 
 export const transactionService = {
@@ -143,25 +169,12 @@ export const transactionService = {
     };
   },
 
-  async getSummary(): Promise<TransactionSummary> {
-    const res = await apiClient.get<ApiResponse<TransactionSummary>>('/transactions/summary');
-    return res.data.data;
+  async delete(id: string): Promise<void> {
+    await apiClient.delete(`/transactions/${id}`);
   },
 
   async getAnalytics(params?: GetAnalyticsQuery): Promise<AnalyticsData> {
     const res = await apiClient.get<ApiResponse<AnalyticsData>>('/transactions/analytics', { params });
     return res.data.data;
-  },
-
-  async filter(params?: GetTransactionsQuery): Promise<PaginatedTransactionsResponse> {
-    const res = await apiClient.post<{ success: boolean; data: TransactionItem[]; pagination: PaginationMeta }>('/transactions/filter', params);
-    return {
-      items: res.data.data,
-      pagination: res.data.pagination,
-    };
-  },
-
-  async delete(id: string): Promise<void> {
-    await apiClient.delete<ApiResponse<{ message: string }>>(`/transactions/${id}`);
   },
 };

@@ -10,7 +10,7 @@ export interface GroupItem {
 export interface CategoryItem {
   id: string;
   name: string;
-  type: 'expense' | 'income';
+  type: 'expense' | 'income' | 'transfer';
   description?: string | null;
   groups: GroupItem[];
   createdAt?: string;
@@ -19,7 +19,7 @@ export interface CategoryItem {
 
 export interface CreateCategoryPayload {
   name: string;
-  type?: 'expense' | 'income';
+  type?: 'expense' | 'income' | 'transfer';
   description?: string;
   groupNames?: string[];
   groupIds?: string[];

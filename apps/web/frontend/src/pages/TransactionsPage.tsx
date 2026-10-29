@@ -28,6 +28,9 @@ import {
   DialogActions,
   Snackbar,
   Alert,
+  FormControlLabel,
+  Switch,
+  Checkbox,
 } from '@mui/material';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
@@ -38,9 +41,13 @@ import ReceiptLongRoundedIcon from '@mui/icons-material/ReceiptLongRounded';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import CategoryRoundedIcon from '@mui/icons-material/CategoryRounded';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
+import SwapHorizRoundedIcon from '@mui/icons-material/SwapHorizRounded';
+import BookmarkAddRoundedIcon from '@mui/icons-material/BookmarkAddRounded';
 
 import { categoryService } from '../services/category.service';
 import { transactionService } from '../services/transaction.service';
+import { ruleService } from '../services/rule.service';
 import { CategoryItem } from '../types/category';
 
 export interface Transaction {
@@ -53,6 +60,12 @@ export interface Transaction {
   type: 'expense' | 'income';
   account: string;
   remarks?: string;
+  needsReview?: boolean;
+  confidence?: string;
+  isTransfer?: boolean;
+  transferLinkedId?: string;
+  transferStatus?: string;
+  excludeFromReport?: boolean;
 }
 
 const DEFAULT_CATEGORIES: readonly string[] = [
@@ -93,12 +106,20 @@ export const TransactionsPage: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('All');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
+  const [reviewFilter, setReviewFilter] = useState<'all' | 'needsReview'>('all');
+  const [transferFilter, setTransferFilter] = useState<'all' | 'transfers'>('all');
   const [dbCategories, setDbCategories] = useState<CategoryItem[]>([]);
 
   // Edit Category Modal State
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [editCategory, setEditCategory] = useState<string>('');
   const [editGroup, setEditGroup] = useState<string>('');
+  const [editIsTransfer, setEditIsTransfer] = useState<boolean>(false);
+  const [editExcludeFromReport, setEditExcludeFromReport] = useState<boolean>(false);
+  const [editSaveAsRule, setEditSaveAsRule] = useState<boolean>(false);
+  const [editRulePattern, setEditRulePattern] = useState<string>('');
+  const [editRuleMatchType, setEditRuleMatchType] = useState<'contains' | 'exact' | 'prefix' | 'regex'>('contains');
+  const [editRulePriority, setEditRulePriority] = useState<number>(60);
   const [isSavingEdit, setIsSavingEdit] = useState<boolean>(false);
 
   // Snackbar Notification State
@@ -149,6 +170,8 @@ export const TransactionsPage: React.FC = () => {
         search: debouncedSearch.trim() || undefined,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
+        needsReview: reviewFilter === 'needsReview' ? true : undefined,
+        isTransfer: transferFilter === 'transfers' ? true : undefined,
       });
 
       const mapped: Transaction[] = res.items.map((t) => ({
@@ -161,6 +184,12 @@ export const TransactionsPage: React.FC = () => {
         type: t.type,
         account: t.account,
         remarks: t.remarks || undefined,
+        needsReview: t.needsReview,
+        confidence: t.confidence || undefined,
+        isTransfer: t.isTransfer,
+        transferLinkedId: t.transferLinkedId || undefined,
+        transferStatus: t.transferStatus || undefined,
+        excludeFromReport: t.excludeFromReport,
       }));
 
       setTransactions(mapped);
@@ -174,7 +203,7 @@ export const TransactionsPage: React.FC = () => {
 
   useEffect(() => {
     loadTransactions();
-  }, [page, rowsPerPage, selectedCategory, debouncedSearch, startDate, endDate]);
+  }, [page, rowsPerPage, selectedCategory, debouncedSearch, startDate, endDate, reviewFilter, transferFilter]);
 
   // Auto-reload if an add-transaction event was fired
   useEffect(() => {
@@ -223,6 +252,14 @@ export const TransactionsPage: React.FC = () => {
     setEditingTransaction(tx);
     setEditCategory(tx.category);
     setEditGroup(tx.group || '');
+    setEditIsTransfer(Boolean(tx.isTransfer));
+    setEditExcludeFromReport(tx.excludeFromReport ?? Boolean(tx.isTransfer));
+    setEditSaveAsRule(false);
+    const rawPattern = tx.remarks || tx.description.split('-')[0].trim() || tx.description;
+    setEditRulePattern(rawPattern);
+    const lower = rawPattern.toLowerCase();
+    setEditRuleMatchType(lower.startsWith('f ') || lower.startsWith('home') ? 'prefix' : 'contains');
+    setEditRulePriority(60);
   };
 
   // Close Edit Dialog
@@ -230,6 +267,10 @@ export const TransactionsPage: React.FC = () => {
     setEditingTransaction(null);
     setEditCategory('');
     setEditGroup('');
+    setEditIsTransfer(false);
+    setEditExcludeFromReport(false);
+    setEditSaveAsRule(false);
+    setEditRulePattern('');
   };
 
   // Save Category / Group update
@@ -245,13 +286,27 @@ export const TransactionsPage: React.FC = () => {
       await transactionService.update(editingTransaction.id, {
         category: editCategory.trim(),
         group: editGroup.trim() || null,
+        isTransfer: editIsTransfer,
+        excludeFromReport: editExcludeFromReport,
+        needsReview: editCategory.trim() === 'Needs review',
+        saveAsRule: editSaveAsRule,
+        rulePattern: editSaveAsRule ? editRulePattern.trim() : undefined,
+        ruleMatchType: editSaveAsRule ? editRuleMatchType : undefined,
+        rulePriority: editSaveAsRule ? editRulePriority : undefined,
       });
 
       // Optimistically update table row
       setTransactions((prev) =>
         prev.map((t) =>
           t.id === editingTransaction.id
-            ? { ...t, category: editCategory.trim(), group: editGroup.trim() || undefined }
+            ? {
+                ...t,
+                category: editCategory.trim(),
+                group: editGroup.trim() || undefined,
+                isTransfer: editIsTransfer,
+                excludeFromReport: editExcludeFromReport,
+                needsReview: editCategory.trim() === 'Needs review',
+              }
             : t
         )
       );
@@ -261,7 +316,9 @@ export const TransactionsPage: React.FC = () => {
 
       setSnackbar({
         open: true,
-        message: `Updated category to "${editCategory.trim()}" for "${editingTransaction.description}"`,
+        message: `Updated "${editingTransaction.description}" successfully!${
+          editSaveAsRule ? ` Reusable rule created for "${editRulePattern}".` : ''
+        }`,
         severity: 'success',
       });
 
@@ -341,6 +398,50 @@ export const TransactionsPage: React.FC = () => {
                 ))}
               </Select>
             </FormControl>
+
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Chip
+                label="All"
+                size="small"
+                clickable
+                color={reviewFilter === 'all' && transferFilter === 'all' ? 'primary' : 'default'}
+                variant={reviewFilter === 'all' && transferFilter === 'all' ? 'filled' : 'outlined'}
+                onClick={() => {
+                  setReviewFilter('all');
+                  setTransferFilter('all');
+                  setPage(0);
+                }}
+                sx={{ fontWeight: 600, height: 36, borderRadius: 2 }}
+              />
+              <Chip
+                icon={<WarningAmberRoundedIcon fontSize="small" />}
+                label="Needs Review"
+                size="small"
+                clickable
+                color={reviewFilter === 'needsReview' ? 'warning' : 'default'}
+                variant={reviewFilter === 'needsReview' ? 'filled' : 'outlined'}
+                onClick={() => {
+                  setReviewFilter((prev) => (prev === 'needsReview' ? 'all' : 'needsReview'));
+                  setTransferFilter('all');
+                  setPage(0);
+                }}
+                sx={{ fontWeight: 600, height: 36, borderRadius: 2 }}
+              />
+              <Chip
+                icon={<SwapHorizRoundedIcon fontSize="small" />}
+                label="Transfers"
+                size="small"
+                clickable
+                color={transferFilter === 'transfers' ? 'info' : 'default'}
+                variant={transferFilter === 'transfers' ? 'filled' : 'outlined'}
+                onClick={() => {
+                  setTransferFilter((prev) => (prev === 'transfers' ? 'all' : 'transfers'));
+                  setReviewFilter('all');
+                  setPage(0);
+                }}
+                sx={{ fontWeight: 600, height: 36, borderRadius: 2 }}
+              />
+            </Box>
           </Box>
 
           <Button
@@ -701,6 +802,132 @@ export const TransactionsPage: React.FC = () => {
             </FormControl>
           )}
 
+          {/* Transfer & Report Exclusion Section */}
+          <Paper
+            elevation={0}
+            sx={{
+              p: 1.5,
+              borderRadius: 2.5,
+              bgcolor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1,
+            }}
+          >
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={editIsTransfer}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setEditIsTransfer(checked);
+                    if (checked) {
+                      setEditCategory('Transfer');
+                      setEditExcludeFromReport(true);
+                    }
+                  }}
+                  size="small"
+                />
+              }
+              label={
+                <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                  Internal Transfer Between Accounts
+                </Typography>
+              }
+            />
+
+            {editIsTransfer && (
+              <Box sx={{ pl: 4 }}>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={editExcludeFromReport}
+                      onChange={(e) => setEditExcludeFromReport(e.target.checked)}
+                      size="small"
+                    />
+                  }
+                  label={
+                    <Typography variant="caption" color="text.secondary">
+                      Exclude from consolidated spending & income reports
+                    </Typography>
+                  }
+                />
+              </Box>
+            )}
+          </Paper>
+
+          {/* Save As Reusable Rule Section (Section 5.4) */}
+          <Paper
+            elevation={0}
+            sx={{
+              p: 1.5,
+              borderRadius: 2.5,
+              bgcolor: editSaveAsRule ? '#f0fdf4' : '#f8fafc',
+              border: '1px solid',
+              borderColor: editSaveAsRule ? '#bbf7d0' : '#e2e8f0',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1.2,
+            }}
+          >
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={editSaveAsRule}
+                  onChange={(e) => setEditSaveAsRule(e.target.checked)}
+                  color="success"
+                  size="small"
+                />
+              }
+              label={
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
+                  <BookmarkAddRoundedIcon fontSize="small" color={editSaveAsRule ? 'success' : 'action'} />
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    Save pattern as reusable categorization rule
+                  </Typography>
+                </Box>
+              }
+            />
+
+            {editSaveAsRule && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5, pt: 0.5 }}>
+                <TextField
+                  label="Match Pattern / Keyword"
+                  size="small"
+                  value={editRulePattern}
+                  onChange={(e) => setEditRulePattern(e.target.value)}
+                  fullWidth
+                  helperText="Future imports matching this pattern will be categorized automatically"
+                />
+                <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 1.5 }}>
+                  <FormControl size="small" fullWidth>
+                    <InputLabel id="rule-match-type-label">Match Type</InputLabel>
+                    <Select
+                      labelId="rule-match-type-label"
+                      value={editRuleMatchType}
+                      label="Match Type"
+                      onChange={(e) => setEditRuleMatchType(e.target.value as any)}
+                    >
+                      <MenuItem value="contains">Contains</MenuItem>
+                      <MenuItem value="prefix">Prefix</MenuItem>
+                      <MenuItem value="exact">Exact</MenuItem>
+                      <MenuItem value="regex">Regex</MenuItem>
+                    </Select>
+                  </FormControl>
+
+                  <TextField
+                    label="Priority (1-100)"
+                    type="number"
+                    size="small"
+                    value={editRulePriority}
+                    onChange={(e) => setEditRulePriority(Number(e.target.value))}
+                  />
+                </Box>
+              </Box>
+            )}
+          </Paper>
+
           <Typography variant="caption" color="text.secondary">
             💡 Modifying the category will immediately update category expense totals and adjust the remaining budget on your dashboard.
           </Typography>
@@ -718,7 +945,7 @@ export const TransactionsPage: React.FC = () => {
             startIcon={isSavingEdit ? <CircularProgress size={16} color="inherit" /> : <EditRoundedIcon />}
             sx={{ fontWeight: 600, px: 3, borderRadius: 2 }}
           >
-            {isSavingEdit ? 'Saving...' : 'Update Category'}
+            {isSavingEdit ? 'Saving...' : 'Update Transaction'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -842,8 +1069,64 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                 <TableCell sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>
                   {t.date}
                 </TableCell>
-                <TableCell sx={{ fontWeight: 600, color: 'text.primary' }}>
-                  {t.description}
+                <TableCell sx={{ fontWeight: 600, color: 'text.primary', maxWidth: 300 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, flexWrap: 'wrap' }}>
+                    <span>{t.description}</span>
+                    {t.needsReview && (
+                      <Tooltip title="Unmatched or low-confidence pattern. Flagged for review.">
+                        <Chip
+                          icon={<WarningAmberRoundedIcon sx={{ fontSize: '0.8rem !important' }} />}
+                          label="Needs Review"
+                          size="small"
+                          sx={{
+                            bgcolor: '#fffbeb',
+                            color: '#b45309',
+                            border: '1px solid #fde68a',
+                            fontWeight: 700,
+                            fontSize: '0.68rem',
+                            height: 20,
+                          }}
+                        />
+                      </Tooltip>
+                    )}
+                    {t.isTransfer && (
+                      <Tooltip title={`Internal transfer between accounts${t.excludeFromReport ? ' (Excluded from spending reports)' : ''}`}>
+                        <Chip
+                          icon={<SwapHorizRoundedIcon sx={{ fontSize: '0.8rem !important' }} />}
+                          label={t.transferStatus === 'linked' ? 'Linked Transfer' : 'Transfer'}
+                          size="small"
+                          sx={{
+                            bgcolor: '#eff6ff',
+                            color: '#1d4ed8',
+                            border: '1px solid #bfdbfe',
+                            fontWeight: 700,
+                            fontSize: '0.68rem',
+                            height: 20,
+                          }}
+                        />
+                      </Tooltip>
+                    )}
+                    {t.excludeFromReport && (
+                      <Tooltip title="Excluded from consolidated spending reports">
+                        <Chip
+                          label="Excluded"
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            borderColor: '#cbd5e1',
+                            color: '#64748b',
+                            fontSize: '0.65rem',
+                            height: 18,
+                          }}
+                        />
+                      </Tooltip>
+                    )}
+                  </Box>
+                  {t.remarks && (
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', fontSize: '0.72rem', mt: 0.2 }}>
+                      {t.remarks}
+                    </Typography>
+                  )}
                 </TableCell>
                 <TableCell>
                   <Tooltip title="Click to edit category & group" arrow>

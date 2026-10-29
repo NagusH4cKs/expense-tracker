@@ -1,8 +1,10 @@
 import { Router } from 'express';
-import { setBudget } from '../controllers/budget.controller.js';
+import { budgetController } from '../controllers/budget.controller.js';
 
 const router = Router();
 
-router.post('/', setBudget);
+router.get('/', budgetController.getBudgetsForMonth);
+router.post('/', budgetController.setBudget);
+router.post('/batch', budgetController.setBatchBudgets);
 
 export default router;

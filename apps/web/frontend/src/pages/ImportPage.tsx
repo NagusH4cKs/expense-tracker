@@ -26,6 +26,12 @@ import {
   Tooltip,
   Card,
   CardContent,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  Switch,
 } from '@mui/material';
 import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
 import TableChartRoundedIcon from '@mui/icons-material/TableChartRounded';
@@ -38,9 +44,13 @@ import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import DescriptionRoundedIcon from '@mui/icons-material/DescriptionRounded';
 import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
 import BlockRoundedIcon from '@mui/icons-material/BlockRounded';
+import BookmarkAddRoundedIcon from '@mui/icons-material/BookmarkAddRounded';
+import SwapHorizRoundedIcon from '@mui/icons-material/SwapHorizRounded';
+import SyncAltRoundedIcon from '@mui/icons-material/SyncAltRounded';
 
 import { importService, IMPORT_BATCH_SIZE, importTimeout, ImportPreviewResponse, ImportProgress, ParsedTransactionPreview } from '../services/import.service';
 import { categoryService } from '../services/category.service';
+import { ruleService } from '../services/rule.service';
 import { CategoryItem } from '../types/category';
 import { SAMPLE_ICICI_STATEMENT } from '../data/sampleStatement';
 
@@ -122,18 +132,87 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
   };
 
   // Update Category manually on a transaction
+  // Save as Rule Modal State
+  const [ruleModalOpen, setRuleModalOpen] = useState(false);
+  const [saveRulePattern, setSaveRulePattern] = useState('');
+  const [saveRuleCategory, setSaveRuleCategory] = useState('');
+  const [saveRuleMatchType, setSaveRuleMatchType] = useState<'contains' | 'exact' | 'prefix' | 'regex'>('contains');
+  const [saveRulePriority, setSaveRulePriority] = useState<number>(60);
+  const [saveRuleBank, setSaveRuleBank] = useState<string>('ALL');
+  const [isSavingRule, setIsSavingRule] = useState<boolean>(false);
+
+  const handleOpenSaveRule = (t: ParsedTransactionPreview) => {
+    const rawPattern = t.detectedKeyword || t.description.split('-')[0].trim();
+    setSaveRulePattern(rawPattern || t.description);
+    setSaveRuleCategory(t.category);
+    setSaveRuleMatchType(t.rawRemarks.toLowerCase().startsWith('f ') || t.rawRemarks.toLowerCase().startsWith('home') ? 'prefix' : 'contains');
+    setSaveRulePriority(60);
+    setSaveRuleBank(t.account || 'ALL');
+    setRuleModalOpen(true);
+  };
+
+  const handleSaveRuleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!saveRulePattern.trim() || !saveRuleCategory.trim()) return;
+
+    try {
+      setIsSavingRule(true);
+      await ruleService.create({
+        pattern: saveRulePattern.trim(),
+        matchType: saveRuleMatchType,
+        category: saveRuleCategory.trim(),
+        priority: Number(saveRulePriority) || 60,
+        bank: saveRuleBank,
+        isUserCreated: true,
+      });
+      setRuleModalOpen(false);
+      alert(`Pattern "${saveRulePattern}" saved as reusable rule for "${saveRuleCategory}"!`);
+    } catch (err: any) {
+      alert(err?.response?.data?.message || 'Failed to save rule');
+    } finally {
+      setIsSavingRule(false);
+    }
+  };
+
+  const handleToggleExcludeTransfer = (tempId: string) => {
+    setTransactions((prev) =>
+      prev.map((t) => (t.tempId === tempId ? { ...t, excludeFromReport: !t.excludeFromReport } : t))
+    );
+  };
+
+  const handleToggleTransfer = (tempId: string) => {
+    setTransactions((prev) =>
+      prev.map((t) => {
+        if (t.tempId === tempId) {
+          const nextIsTransfer = !t.isTransfer;
+          return {
+            ...t,
+            isTransfer: nextIsTransfer,
+            category: nextIsTransfer ? 'Transfer' : t.category === 'Transfer' ? 'Others' : t.category,
+            excludeFromReport: nextIsTransfer,
+          };
+        }
+        return t;
+      })
+    );
+  };
+
+  // Update Category manually on a transaction
   const handleCategoryChange = (tempId: string, newCategory: string) => {
     setTransactions((prev) =>
       prev.map((t) => {
         if (t.tempId === tempId) {
-          // Find matching category to see its available groups
           const matched = categories.find((c) => c.name === newCategory);
           const defaultGroup = matched?.groups?.[0]?.name || t.group;
+          const isTransferCat = newCategory.toLowerCase() === 'transfer';
           return {
             ...t,
             category: newCategory,
             group: defaultGroup,
             isNewGroup: false,
+            needsReview: newCategory === 'Needs review',
+            isTransfer: isTransferCat,
+            excludeFromReport: isTransferCat ? true : t.excludeFromReport,
           };
         }
         return t;
@@ -155,10 +234,10 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
     );
   };
 
-  // Toggle All Selection (excluding duplicates)
+  // Toggle All Selection (excluding confirmed duplicates)
   const handleToggleSelectAll = (checked: boolean) => {
     setTransactions((prev) =>
-      prev.map((t) => (t.isDuplicate ? t : { ...t, selected: checked }))
+      prev.map((t) => (t.duplicateStatus === 'confirmed' ? t : { ...t, selected: checked }))
     );
   };
 
@@ -189,8 +268,11 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
     }
   };
 
-  const selectedCount = transactions.filter((t) => t.selected && !t.isDuplicate).length;
-  const duplicatesCount = transactions.filter((t) => t.isDuplicate).length;
+  const selectedCount = transactions.filter((t) => t.selected && t.duplicateStatus !== 'confirmed').length;
+  const confirmedDuplicatesCount = transactions.filter((t) => t.duplicateStatus === 'confirmed').length;
+  const possibleDuplicatesCount = transactions.filter((t) => t.duplicateStatus === 'possible').length;
+  const needsReviewCount = transactions.filter((t) => t.needsReview || t.category === 'Needs review').length;
+  const transfersCount = transactions.filter((t) => t.isTransfer).length;
   const newGroupCount = transactions.filter((t) => t.isNewGroup).length;
 
   return (
@@ -488,7 +570,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
               gap: 2,
             }}
           >
-            <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
               <Chip
                 label={`Total: ${transactions.length}`}
                 variant="outlined"
@@ -499,19 +581,34 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                 color="success"
                 sx={{ fontWeight: 700, fontSize: '0.85rem' }}
               />
-              {duplicatesCount > 0 && (
+              {confirmedDuplicatesCount > 0 && (
                 <Chip
                   icon={<BlockRoundedIcon />}
-                  label={`Duplicates Skipped: ${duplicatesCount}`}
+                  label={`Confirmed Duplicates: ${confirmedDuplicatesCount}`}
                   color="error"
                   sx={{ fontWeight: 700, fontSize: '0.85rem' }}
                 />
               )}
-              {newGroupCount > 0 && (
+              {possibleDuplicatesCount > 0 && (
                 <Chip
                   icon={<WarningAmberRoundedIcon />}
-                  label={`New Groups to Review: ${newGroupCount}`}
+                  label={`Possible Duplicates: ${possibleDuplicatesCount}`}
                   color="warning"
+                  sx={{ fontWeight: 700, fontSize: '0.85rem' }}
+                />
+              )}
+              {needsReviewCount > 0 && (
+                <Chip
+                  icon={<WarningAmberRoundedIcon />}
+                  label={`Needs Review: ${needsReviewCount}`}
+                  sx={{ fontWeight: 700, fontSize: '0.85rem', bgcolor: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}
+                />
+              )}
+              {transfersCount > 0 && (
+                <Chip
+                  icon={<SyncAltRoundedIcon />}
+                  label={`Transfers: ${transfersCount}`}
+                  color="info"
                   sx={{ fontWeight: 700, fontSize: '0.85rem' }}
                 />
               )}
@@ -556,20 +653,23 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                   <TableRow>
                     <TableCell padding="checkbox">
                       <Checkbox
-                        indeterminate={selectedCount > 0 && selectedCount < transactions.length - duplicatesCount}
-                        checked={selectedCount > 0 && selectedCount === transactions.length - duplicatesCount}
+                        indeterminate={selectedCount > 0 && selectedCount < transactions.filter((t) => t.duplicateStatus !== 'confirmed').length}
+                        checked={selectedCount > 0 && selectedCount === transactions.filter((t) => t.duplicateStatus !== 'confirmed').length}
                         onChange={(e) => handleToggleSelectAll(e.target.checked)}
                       />
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary' }}>DATE</TableCell>
-                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary' }}>PAYEE / NARRATION</TableCell>
+                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary', minWidth: 220 }}>PAYEE / NARRATION</TableCell>
                     <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary' }}>TYPE</TableCell>
                     <TableCell align="right" sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary' }}>AMOUNT</TableCell>
-                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary', minWidth: 170 }}>
-                      CATEGORY (AUTO/SELECT)
+                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary', minWidth: 200 }}>
+                      CATEGORY & RULE
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary', minWidth: 150 }}>
+                      GROUP
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary', minWidth: 160 }}>
-                      GROUP / SUB-ITEM
+                      TRANSFER / EXCLUSION
                     </TableCell>
                     <TableCell align="center" sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary' }}>STATUS</TableCell>
                   </TableRow>
@@ -578,6 +678,9 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                 <TableBody>
                   {transactions.map((t) => {
                     const isExpense = t.type === 'expense';
+                    const isConfirmedDup = t.duplicateStatus === 'confirmed';
+                    const isPossibleDup = t.duplicateStatus === 'possible';
+                    const isReview = t.needsReview || t.category === 'Needs review';
                     const availableGroups = categories.find((c) => c.name === t.category)?.groups || [];
 
                     return (
@@ -586,15 +689,21 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                         hover
                         selected={t.selected}
                         sx={{
-                          opacity: t.isDuplicate ? 0.6 : 1,
-                          bgcolor: t.isDuplicate ? '#fff7ed' : t.selected ? 'rgba(79, 70, 229, 0.02)' : 'inherit',
+                          opacity: isConfirmedDup ? 0.6 : 1,
+                          bgcolor: isConfirmedDup
+                            ? '#fff1f2'
+                            : isPossibleDup
+                            ? '#fffbeb'
+                            : t.selected
+                            ? 'rgba(79, 70, 229, 0.02)'
+                            : 'inherit',
                         }}
                       >
                         {/* Checkbox */}
                         <TableCell padding="checkbox">
                           <Checkbox
-                            checked={t.selected}
-                            disabled={t.isDuplicate}
+                            checked={t.selected && !isConfirmedDup}
+                            disabled={isConfirmedDup}
                             onChange={() => handleToggleSelect(t.tempId)}
                           />
                         </TableCell>
@@ -605,13 +714,18 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                         </TableCell>
 
                         {/* Description & clean payee */}
-                        <TableCell sx={{ maxWidth: 260 }}>
+                        <TableCell sx={{ maxWidth: 280 }}>
                           <Typography variant="body2" sx={{ fontWeight: 600, fontSize: '0.85rem' }} noWrap>
                             {t.description}
                           </Typography>
                           <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', fontSize: '0.72rem' }}>
                             {t.rawRemarks}
                           </Typography>
+                          {t.reference && (
+                            <Typography variant="caption" sx={{ fontSize: '0.68rem', color: 'primary.main', display: 'block' }}>
+                              Ref: {t.reference}
+                            </Typography>
+                          )}
                         </TableCell>
 
                         {/* Type */}
@@ -641,35 +755,50 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                           {isExpense ? '−' : '+'}₹{t.amount.toLocaleString('en-IN')}
                         </TableCell>
 
-                        {/* Category Selector (Auto-set with manual option) */}
+                        {/* Category Selector + Save As Rule */}
                         <TableCell>
-                          <FormControl size="small" fullWidth>
-                            <Select
-                              value={t.category || 'Other'}
-                              onChange={(e) => handleCategoryChange(t.tempId, e.target.value)}
-                              sx={{
-                                fontSize: '0.82rem',
-                                height: 32,
-                                borderRadius: 1.5,
-                                bgcolor: '#ffffff',
-                              }}
-                            >
-                              {categories.map((c) => (
-                                <MenuItem key={c.id} value={c.name} sx={{ fontSize: '0.82rem' }}>
-                                  {c.name}
-                                </MenuItem>
-                              ))}
-                              {/* If category is not in list yet */}
-                              {!categories.some((c) => c.name === t.category) && (
-                                <MenuItem value={t.category} sx={{ fontSize: '0.82rem' }}>
-                                  {t.category} (Detected)
-                                </MenuItem>
-                              )}
-                            </Select>
-                          </FormControl>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <FormControl size="small" fullWidth>
+                              <Select
+                                value={t.category || 'Needs review'}
+                                onChange={(e) => handleCategoryChange(t.tempId, e.target.value)}
+                                sx={{
+                                  fontSize: '0.82rem',
+                                  height: 32,
+                                  borderRadius: 1.5,
+                                  bgcolor: '#ffffff',
+                                }}
+                              >
+                                {categories.map((c) => (
+                                  <MenuItem key={c.id} value={c.name} sx={{ fontSize: '0.82rem' }}>
+                                    {c.name}
+                                  </MenuItem>
+                                ))}
+                                {!categories.some((c) => c.name === t.category) && (
+                                  <MenuItem value={t.category} sx={{ fontSize: '0.82rem' }}>
+                                    {t.category}
+                                  </MenuItem>
+                                )}
+                              </Select>
+                            </FormControl>
+                            <Tooltip title="Save as reusable categorization rule">
+                              <IconButton
+                                size="small"
+                                onClick={() => handleOpenSaveRule(t)}
+                                sx={{ color: 'primary.main', border: '1px solid #e2e8f0', p: 0.6 }}
+                              >
+                                <BookmarkAddRoundedIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          </Box>
+                          {t.detectedKeyword && (
+                            <Typography variant="caption" sx={{ fontSize: '0.68rem', color: 'success.dark', display: 'block', mt: 0.3 }}>
+                              Rule: "{t.detectedKeyword}"
+                            </Typography>
+                          )}
                         </TableCell>
 
-                        {/* Group Selection / New Group Indicator */}
+                        {/* Group Selection */}
                         <TableCell>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             {availableGroups.length > 0 ? (
@@ -709,30 +838,80 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                                 }}
                               />
                             )}
+                          </Box>
+                        </TableCell>
 
-                            {t.isNewGroup && (
-                              <Tooltip title="This group is new and will be automatically registered under the chosen category">
-                                <Chip
-                                  label="New"
+                        {/* Transfer & Exclusion Column */}
+                        <TableCell>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Chip
+                                icon={<SwapHorizRoundedIcon fontSize="small" />}
+                                label={t.isTransfer ? (t.transferStatus === 'linked' ? 'Linked Transfer' : 'Transfer') : 'Not Transfer'}
+                                size="small"
+                                onClick={() => handleToggleTransfer(t.tempId)}
+                                sx={{
+                                  height: 22,
+                                  fontSize: '0.68rem',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  bgcolor: t.isTransfer ? '#eff6ff' : '#f1f5f9',
+                                  color: t.isTransfer ? '#1d4ed8' : '#64748b',
+                                }}
+                              />
+                            </Box>
+                            {t.isTransfer && (
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <Checkbox
                                   size="small"
-                                  color="warning"
-                                  sx={{ height: 18, fontSize: '0.62rem', fontWeight: 700 }}
+                                  checked={t.excludeFromReport ?? true}
+                                  onChange={() => handleToggleExcludeTransfer(t.tempId)}
+                                  sx={{ p: 0 }}
                                 />
-                              </Tooltip>
+                                <Typography variant="caption" sx={{ fontSize: '0.68rem', color: 'text.secondary' }}>
+                                  Exclude from Reports
+                                </Typography>
+                              </Box>
                             )}
                           </Box>
                         </TableCell>
 
                         {/* Status / Duplicate Pill */}
                         <TableCell align="center">
-                          {t.isDuplicate ? (
-                            <Tooltip title={t.duplicateReason || 'Duplicate record'}>
+                          {isConfirmedDup ? (
+                            <Tooltip title={t.duplicateReason || 'Exact duplicate found in database. Will be skipped.'}>
                               <Chip
                                 icon={<BlockRoundedIcon fontSize="small" />}
-                                label="Duplicate"
+                                label="Confirmed Dup"
                                 size="small"
                                 color="error"
                                 sx={{ height: 22, fontSize: '0.68rem', fontWeight: 700 }}
+                              />
+                            </Tooltip>
+                          ) : isPossibleDup ? (
+                            <Tooltip title={t.duplicateReason || 'Possible duplicate based on similar amount and date.'}>
+                              <Chip
+                                icon={<WarningAmberRoundedIcon fontSize="small" />}
+                                label="Possible Dup"
+                                size="small"
+                                color="warning"
+                                sx={{ height: 22, fontSize: '0.68rem', fontWeight: 700 }}
+                              />
+                            </Tooltip>
+                          ) : isReview ? (
+                            <Tooltip title="Unmatched or low-confidence pattern. Please verify category.">
+                              <Chip
+                                icon={<WarningAmberRoundedIcon fontSize="small" />}
+                                label="Needs Review"
+                                size="small"
+                                sx={{
+                                  height: 22,
+                                  fontSize: '0.68rem',
+                                  fontWeight: 700,
+                                  bgcolor: '#fffbeb',
+                                  color: '#b45309',
+                                  border: '1px solid #fde68a',
+                                }}
                               />
                             </Tooltip>
                           ) : (
@@ -794,9 +973,9 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
             <Typography variant="body1" color="text.secondary">
               <strong>{importResult.importedCount}</strong> new transactions were imported and saved to the database.
             </Typography>
-            {duplicatesCount > 0 && (
+            {confirmedDuplicatesCount > 0 && (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                {duplicatesCount} duplicate transactions were detected and safely skipped.
+                {confirmedDuplicatesCount} duplicate transactions were detected and safely skipped.
               </Typography>
             )}
           </Box>
@@ -828,6 +1007,80 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
           </Box>
         </Paper>
       )}
+
+      {/* Save Reusable Rule Dialog */}
+      <Dialog open={ruleModalOpen} onClose={() => setRuleModalOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>Save Categorization Rule</DialogTitle>
+        <form onSubmit={handleSaveRuleSubmit}>
+          <DialogContent sx={{ display: 'flex', flexDirection: 'column', gap: 2.5, pt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Save this narration pattern as a reusable rule. Future imports matching this pattern will automatically be assigned to this category.
+            </Typography>
+            <TextField
+              label="Match Pattern / Keyword"
+              value={saveRulePattern}
+              onChange={(e) => setSaveRulePattern(e.target.value)}
+              required
+              fullWidth
+              size="small"
+              helperText="E.g., ZERODHA, SWIGGY, or prefix like 'f ' / 'home'"
+            />
+            <FormControl fullWidth size="small">
+              <Typography variant="caption" sx={{ mb: 0.5, fontWeight: 600 }}>
+                Category
+              </Typography>
+              <Select
+                value={saveRuleCategory}
+                onChange={(e) => setSaveRuleCategory(e.target.value)}
+                required
+              >
+                {categories.map((c) => (
+                  <MenuItem key={c.id} value={c.name}>
+                    {c.name}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl fullWidth size="small">
+              <Typography variant="caption" sx={{ mb: 0.5, fontWeight: 600 }}>
+                Matching Type
+              </Typography>
+              <Select
+                value={saveRuleMatchType}
+                onChange={(e) => setSaveRuleMatchType(e.target.value as any)}
+              >
+                <MenuItem value="contains">Contains (matches anywhere in description/remarks)</MenuItem>
+                <MenuItem value="prefix">Prefix (starts with keyword)</MenuItem>
+                <MenuItem value="exact">Exact (full exact match)</MenuItem>
+                <MenuItem value="regex">Regex pattern</MenuItem>
+              </Select>
+            </FormControl>
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+              <TextField
+                label="Priority (1-100)"
+                type="number"
+                value={saveRulePriority}
+                onChange={(e) => setSaveRulePriority(Number(e.target.value))}
+                size="small"
+                helperText="Higher numbers take precedence"
+              />
+              <TextField
+                label="Bank Scope"
+                value={saveRuleBank}
+                onChange={(e) => setSaveRuleBank(e.target.value)}
+                size="small"
+                helperText="'ALL' or specific bank e.g. ICICI, SBI"
+              />
+            </Box>
+          </DialogContent>
+          <DialogActions sx={{ p: 2.5 }}>
+            <Button onClick={() => setRuleModalOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="contained" disabled={isSavingRule}>
+              {isSavingRule ? 'Saving...' : 'Save Rule'}
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
     </Box>
   );
 };

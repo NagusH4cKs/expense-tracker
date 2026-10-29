@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import crypto from 'crypto';
 import { prisma } from '../config/prisma.js';
+import { ruleService, normalizeText } from './rule.service.js';
 
 /**
  * Parse CSV or Excel buffer or text into 2D matrix of string cells
@@ -60,10 +61,17 @@ export const detectColumns = (matrix) => {
     const row = matrix[r].map((cell) => String(cell || '').trim());
     const rowStr = row.join(' ').toLowerCase();
 
-    // Check account number in metadata rows
-    if (rowStr.includes('account number')) {
-      const val = row.find((c) => c && !c.toLowerCase().includes('account number'));
+    // Check account number or bank name in metadata rows
+    if (rowStr.includes('account number') || rowStr.includes('account:')) {
+      const val = row.find((c) => c && !c.toLowerCase().includes('account number') && !c.toLowerCase().includes('account:'));
       if (val) accountName = val;
+    }
+    if (rowStr.includes('state bank of india') || rowStr.includes('sbi')) {
+      accountName = 'SBI';
+    } else if (rowStr.includes('icici bank') || rowStr.includes('icici')) {
+      accountName = 'ICICI';
+    } else if (rowStr.includes('hdfc bank') || rowStr.includes('hdfc')) {
+      accountName = 'HDFC';
     }
 
     const cols = {
@@ -169,126 +177,60 @@ export const detectColumns = (matrix) => {
 };
 
 /**
- * Extract clean transaction identifier / reference to prevent duplicates
+ * Extract clean transaction identifier / reference
  */
-export const generateReference = (date, remarks, amount, type, rowIdx) => {
-  // Check if remarks contains UPI transaction ID (e.g. ICI47c11fb418b844aaba81bc4f6ca701c5 or ref digits)
+export const generateReference = (date, remarks, amount, type, rawRef = '') => {
+  if (rawRef && rawRef.trim()) {
+    return rawRef.trim();
+  }
+  // Check if remarks contains UPI / UTR transaction ID (12 digits or alphanumeric string)
   const upiMatch = remarks.match(/([A-Z0-9]{20,40}|\b\d{12}\b)/);
   if (upiMatch) {
     return upiMatch[0];
   }
-  // Fallback to deterministic hash of (date + remarks + amount + type)
+  // Deterministic hash of (date + remarks + amount + type)
   return crypto
     .createHash('sha256')
-    .update(`${date}_${remarks.trim().toLowerCase()}_${amount}_${type}`)
+    .update(`${date}_${normalizeText(remarks)}_${amount}_${type}`)
     .digest('hex')
     .slice(0, 32);
 };
 
 /**
- * Extract clean merchant/payee and group keyword from UPI/ACH narration
+ * Bank-specific parsing of narration for clean payee & details
  */
-export const extractDetails = (remarks) => {
+export const extractDetails = (remarks, bank = 'ICICI') => {
   let cleanDesc = remarks;
   let detectedKeyword = '';
 
-  if (remarks.startsWith('UPI/')) {
-    const parts = remarks.split('/');
-    // parts[1] is usually merchant/receiver (e.g. GEETHAPALA, MUTHUSAMY, Basappa)
-    // parts[3] is user remarks / purpose (e.g. haircut, home seeds, snacks pan, tea, coffee, grocery)
+  const trimmed = remarks.trim();
+
+  // Bank Specific: UPI Format (ICICI, Axis, HDFC)
+  if (trimmed.startsWith('UPI/')) {
+    const parts = trimmed.split('/');
     const merchant = parts[1] || '';
     const purpose = parts[3] || '';
-
-    cleanDesc = merchant ? `${merchant} - ${purpose || 'UPI Payment'}` : remarks;
+    cleanDesc = merchant ? `${merchant}${purpose ? ' - ' + purpose : ''}` : remarks;
     detectedKeyword = purpose.toLowerCase().trim();
-  } else if (remarks.startsWith('ACH/') || remarks.startsWith('CMS/')) {
-    const parts = remarks.split('/');
+  } else if (trimmed.startsWith('ACH/') || trimmed.startsWith('CMS/')) {
+    const parts = trimmed.split('/');
     cleanDesc = parts[1] || remarks;
     detectedKeyword = 'dividend';
+  } else if (/^TRANSFER-UPI\//i.test(trimmed)) {
+    // SBI UPI narration format
+    const parts = trimmed.split('/');
+    const merchant = parts[1] || parts[2] || '';
+    cleanDesc = merchant ? `UPI: ${merchant}` : remarks;
+  } else if (/^NEFT-/i.test(trimmed) || /^RTGS-/i.test(trimmed)) {
+    const parts = trimmed.split('-');
+    cleanDesc = parts[1] || remarks;
   }
 
   return { cleanDesc, detectedKeyword };
 };
 
 /**
- * Categorize transaction automatically based on database categories & groups and built-in rules
- */
-export const matchCategoryAndGroup = async (remarks, detectedKeyword, type, dbCategories = []) => {
-  const searchTarget = `${remarks} ${detectedKeyword}`.toLowerCase();
-
-  // 1. Check exact or partial match with DB groups first
-  for (const cat of dbCategories) {
-    for (const grp of cat.groups) {
-      const grpName = grp.name.toLowerCase();
-      if (searchTarget.includes(grpName)) {
-        return {
-          category: cat.name,
-          group: grp.name,
-          isNewGroup: false,
-          confidence: 'high',
-        };
-      }
-    }
-  }
-
-  // 2. Check category name match
-  for (const cat of dbCategories) {
-    const catName = cat.name.toLowerCase();
-    if (searchTarget.includes(catName)) {
-      return {
-        category: cat.name,
-        group: detectedKeyword || null,
-        isNewGroup: Boolean(detectedKeyword),
-        confidence: 'medium',
-      };
-    }
-  }
-
-  // 3. Intelligent Banking Keyword Heuristics
-  const rules = [
-    { keywords: ['tea', 'chai', 'coffee', 'puff', 'puffs', 'snack', 'snacks', 'samosa', 'chaat', 'bakery', 'juice', 'ice'], category: 'Snacks', group: detectedKeyword || 'Snacks' },
-    { keywords: ['grocery', 'vegetables', 'fruits', 'dairy', 'milk', 'eggs', 'zepto', 'blinkit', 'instamart', 'swiggy instamart'], category: 'Grocery', group: detectedKeyword || 'Provisions' },
-    { keywords: ['haircut', 'salon', 'barber', 'shave', 'spa'], category: 'Personal Care', group: 'Haircut' },
-    { keywords: ['bmtc', 'metro', 'train', 'irctc', 'transport', 'statetransport', 'travel', 'bus', 'fuel', 'cab', 'auto', 'ola', 'uber'], category: 'Travel', group: detectedKeyword || 'Commute' },
-    { keywords: ['dinner', 'lunch', 'restaurant', 'hotel', 'swiggy', 'zomato', 'food', 'biryani'], category: 'Food & Dining', group: detectedKeyword || 'Meals' },
-    { keywords: ['water', 'watercan', 'water can'], category: 'Home', group: 'Water' },
-    { keywords: ['home seeds', 'plants', 'seeds'], category: 'Home', group: 'Home Garden' },
-    { keywords: ['chicken', 'mutton', 'meat', 'fish'], category: 'Grocery', group: 'Meat & Poultry' },
-    { keywords: ['dividend', 'ach/', 'cms/', 'zerodha', 'upstox', 'groww', 'mutual fund', 'share', 'securities'], category: 'Investment', group: type === 'income' ? 'Dividend' : 'Investment' },
-    { keywords: ['salary', 'payroll', 'wages'], category: 'Salary', group: 'Salary' },
-    { keywords: ['refund', 'rfnd'], category: 'Refund', group: 'Refund' },
-    { keywords: ['self', 'transfer', 'ragu debt', 'friend'], category: 'Transfer', group: detectedKeyword || 'Transfer' },
-  ];
-
-  for (const rule of rules) {
-    if (rule.keywords.some((k) => searchTarget.includes(k))) {
-      // Check if category exists in DB, otherwise find matching type
-      const matchedDbCat = dbCategories.find(
-        (c) => c.name.toLowerCase() === rule.category.toLowerCase()
-      );
-      return {
-        category: matchedDbCat ? matchedDbCat.name : rule.category,
-        group: rule.group,
-        isNewGroup: !dbCategories.some((c) =>
-          c.groups.some((g) => g.name.toLowerCase() === rule.group?.toLowerCase())
-        ),
-        confidence: 'rule',
-      };
-    }
-  }
-
-  // Default fallback
-  const fallbackCategory = type === 'income' ? 'Income' : 'Other';
-  return {
-    category: fallbackCategory,
-    group: detectedKeyword || null,
-    isNewGroup: Boolean(detectedKeyword),
-    confidence: 'low',
-  };
-};
-
-/**
- * Process and preview statement with automatic mapping, categorization, and duplicate checking
+ * Preview statement: Parsing, Rule Categorization, Confirmed vs Possible Duplicate Detection, and Transfer Linking
  */
 export const preview = async (bufferOrString) => {
   const matrix = parseToMatrix(bufferOrString);
@@ -306,7 +248,6 @@ export const preview = async (bufferOrString) => {
     const row = dataRows[i];
     if (!row || !Array.isArray(row) || row.length === 0) continue;
 
-    // Extract raw cells
     const rawDate = detectedColumns.dateIdx >= 0 ? String(row[detectedColumns.dateIdx] ?? '').trim() : '';
     const rawRemarks = detectedColumns.remarksIdx >= 0 ? String(row[detectedColumns.remarksIdx] ?? '').trim() : '';
     const rawWithdrawal = detectedColumns.withdrawalIdx >= 0 ? String(row[detectedColumns.withdrawalIdx] ?? '').trim() : '';
@@ -314,8 +255,8 @@ export const preview = async (bufferOrString) => {
     const rawAmount = detectedColumns.amountIdx >= 0 ? String(row[detectedColumns.amountIdx] ?? '').trim() : '';
     const rawType = detectedColumns.typeIdx >= 0 ? String(row[detectedColumns.typeIdx] ?? '').trim().toLowerCase() : '';
     const rawBalance = detectedColumns.balanceIdx >= 0 ? String(row[detectedColumns.balanceIdx] ?? '').trim() : '';
+    const rawCheque = detectedColumns.chequeIdx >= 0 ? String(row[detectedColumns.chequeIdx] ?? '').trim() : '';
 
-    // Skip legends, headers or summary/footer rows
     if (!rawRemarks && !rawWithdrawal && !rawDeposit && !rawAmount) continue;
     const lowerRemarks = rawRemarks.toLowerCase();
     if (lowerRemarks.includes('legends used') || lowerRemarks.includes('cheque number from') || lowerRemarks.includes('total:')) continue;
@@ -350,12 +291,10 @@ export const preview = async (bufferOrString) => {
       }
     }
 
-    // Must have some amount
     if (amount === 0) continue;
 
-    // Robust Date parsing
+    // Date normalization
     let formattedDate = '';
-    // 1. Check Excel serial date number
     if (/^\d{5}(\.\d+)?$/.test(rawDate)) {
       const serial = parseFloat(rawDate);
       const excelDate = new Date(Math.round((serial - 25569) * 86400 * 1000));
@@ -363,7 +302,6 @@ export const preview = async (bufferOrString) => {
         formattedDate = excelDate.toISOString().slice(0, 10);
       }
     }
-    // 2. Standard DD/MM/YYYY, DD,MM,YYYY, DD-MM-YYYY
     if (!formattedDate) {
       const dateMatch = rawDate.match(/^(\d{1,2})[\/,\-\.\s]+(\d{1,2})[\/,\-\.\s]+(\d{2,4})/);
       if (dateMatch) {
@@ -373,31 +311,27 @@ export const preview = async (bufferOrString) => {
         formattedDate = `${year}-${month}-${day}`;
       }
     }
-    // 3. YYYY-MM-DD
     if (!formattedDate && /^\d{4}[\-\/]\d{1,2}[\-\/]\d{1,2}/.test(rawDate)) {
       formattedDate = rawDate.replace(/\//g, '-').slice(0, 10);
     }
-    // 4. Textual Date
     if (!formattedDate && rawDate) {
       const parsed = new Date(rawDate);
       if (!isNaN(parsed.getTime())) {
         formattedDate = parsed.toISOString().slice(0, 10);
       }
     }
-    // 5. Fallback
     if (!formattedDate) {
       formattedDate = new Date().toISOString().slice(0, 10);
     }
 
-    const { cleanDesc, detectedKeyword } = extractDetails(rawRemarks);
-    const reference = generateReference(formattedDate, rawRemarks, amount, type, i);
-
+    const { cleanDesc, detectedKeyword } = extractDetails(rawRemarks, accountName);
+    const reference = generateReference(formattedDate, rawRemarks, amount, type, rawCheque);
     referencesToCheck.push(reference);
 
     const cleanBalance = parseFloat(rawBalance.replace(/[^0-9.-]/g, '')) || null;
 
     parsedTransactions.push({
-      tempId: `tmp_${i}_${Date.now()}`,
+      tempId: `tmp_${i}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       date: formattedDate,
       rawRemarks,
       description: cleanDesc,
@@ -411,77 +345,184 @@ export const preview = async (bufferOrString) => {
     });
   }
 
-  // Duplicate detection in Database
-  const existingTxns = await prisma.transaction.findMany({
+  // Load existing records from DB to check for Confirmed & Possible Duplicates
+  const existingByRef = await prisma.transaction.findMany({
     where: {
       reference: { in: referencesToCheck },
     },
-    select: { reference: true, date: true, description: true },
+    select: { id: true, reference: true, date: true, amount: true, type: true, account: true, description: true },
+  });
+  const existingRefSet = new Set(existingByRef.map((t) => t.reference));
+
+  // Check matching dates for possible duplicates (same account, date, amount, type)
+  const allDatesInFile = Array.from(new Set(parsedTransactions.map((t) => t.date)));
+  const existingSameDate = await prisma.transaction.findMany({
+    where: {
+      date: { in: allDatesInFile },
+    },
+    select: { id: true, reference: true, date: true, amount: true, type: true, account: true, description: true },
   });
 
-  const existingRefSet = new Set(existingTxns.map((t) => t.reference));
-  const seenInFile = new Set();
+  // Fetch active categorization rules & categories
+  const [rules, dbCategories] = await Promise.all([
+    prisma.categorizationRule.findMany({
+      where: { isActive: true },
+      orderBy: [{ priority: 'desc' }, { createdAt: 'desc' }],
+    }),
+    prisma.category.findMany({
+      include: { groups: true },
+    }),
+  ]);
 
-  // Fetch DB categories once for rapid matching
-  const dbCategories = await prisma.category.findMany({
-    include: { groups: true },
-  });
+  const seenInFileRef = new Set();
+  const seenInFileTuple = new Map(); // key -> tempId
 
-  // Categorize each and mark duplicates
-  const finalTransactions = [];
+  // Categorize and Run Duplicate Detection
+  const categorizedTransactions = [];
+
   for (const t of parsedTransactions) {
-    const isDbDuplicate = existingRefSet.has(t.reference);
-    const isFileDuplicate = seenInFile.has(t.reference);
-    const isDuplicate = isDbDuplicate || isFileDuplicate;
+    const tupleKey = `${t.account}_${t.date}_${t.amount}_${t.type}`;
 
-    seenInFile.add(t.reference);
+    // 1. Confirmed Duplicate:
+    // Case A: Reference exists in DB or earlier in current file
+    const isDbRefMatch = existingRefSet.has(t.reference);
+    const isFileRefMatch = seenInFileRef.has(t.reference);
 
-    const catInfo = await matchCategoryAndGroup(t.rawRemarks, t.detectedKeyword, t.type, dbCategories);
+    // Case B: Exact match on (account, date, amount, type, description)
+    const isDbExactMatch = existingSameDate.some(
+      (e) => e.account === t.account && e.date === t.date && Math.abs(e.amount - t.amount) < 0.01 && e.type === t.type && normalizeText(e.description) === normalizeText(t.description)
+    );
+    const isFileExactMatch = seenInFileTuple.has(tupleKey) && normalizeText(seenInFileTuple.get(tupleKey).description) === normalizeText(t.description);
 
-    finalTransactions.push({
+    let duplicateStatus = 'none';
+    let duplicateReason = '';
+
+    if (isDbRefMatch || isFileRefMatch) {
+      duplicateStatus = 'confirmed';
+      duplicateReason = isDbRefMatch ? 'Matches existing bank reference in database' : 'Duplicate transaction reference in file';
+    } else if (isDbExactMatch || isFileExactMatch) {
+      duplicateStatus = 'confirmed';
+      duplicateReason = 'Identical account, date, amount, and description';
+    } else {
+      // 2. Possible Duplicate requiring review (Section 5.5):
+      // Same account, date, amount, type but different reference or slight variation in description
+      const possibleDbMatch = existingSameDate.find(
+        (e) => e.account === t.account && e.date === t.date && Math.abs(e.amount - t.amount) < 0.01 && e.type === t.type
+      );
+      if (possibleDbMatch) {
+        duplicateStatus = 'possible';
+        duplicateReason = `Matches transaction on ${t.date} for ₹${t.amount} (${possibleDbMatch.description})`;
+      } else if (seenInFileTuple.has(tupleKey)) {
+        duplicateStatus = 'possible';
+        duplicateReason = `Duplicate amount ₹${t.amount} on ${t.date} found earlier in file`;
+      }
+    }
+
+    seenInFileRef.add(t.reference);
+    if (!seenInFileTuple.has(tupleKey)) {
+      seenInFileTuple.set(tupleKey, t);
+    }
+
+    // 3. Rule-based Categorization (Section 5.4)
+    const catMatch = ruleService.matchTransactionWithRules(
+      { rawRemarks: t.rawRemarks, description: t.description, account: t.account },
+      rules,
+      dbCategories
+    );
+
+    // 4. Transfer Detection (Section 5.6):
+    // Check if category is Transfer or remarks indicate self transfer
+    const lowerComb = `${t.rawRemarks} ${t.description}`.toLowerCase();
+    const isTransferDetected = catMatch.isTransfer ||
+      lowerComb.includes('self transfer') ||
+      lowerComb.includes('own account') ||
+      lowerComb.includes('to sbi') ||
+      lowerComb.includes('from sbi') ||
+      lowerComb.includes('to icici') ||
+      lowerComb.includes('from icici');
+
+    categorizedTransactions.push({
       ...t,
-      category: catInfo.category,
-      group: catInfo.group,
-      isNewGroup: catInfo.isNewGroup,
-      confidence: catInfo.confidence,
-      isDuplicate,
+      category: isTransferDetected ? 'Transfer' : catMatch.category,
+      group: catMatch.group || (isTransferDetected ? 'Internal Transfer' : null),
+      confidence: isTransferDetected ? 'high' : catMatch.confidence,
+      matchedRuleId: catMatch.matchedRuleId,
+      needsReview: isTransferDetected ? false : catMatch.needsReview,
+      isTransfer: isTransferDetected,
+      transferStatus: isTransferDetected ? 'one_sided' : null,
+      excludeFromReport: isTransferDetected, // Exclude internal transfer by default from spending reports
+      duplicateStatus,
+      duplicateReason,
+      isDuplicate: duplicateStatus === 'confirmed',
+      selected: duplicateStatus !== 'confirmed', // Confirmed duplicates deselected by default
     });
   }
 
-  const duplicatesCount = finalTransactions.filter((t) => t.isDuplicate).length;
-  const newItemsCount = finalTransactions.length - duplicatesCount;
+  // 5. Link debit and credit sides of transfers (Section 5.6)
+  // For transfers in the file: match debit (expense) and credit (income) with identical amount on same date
+  const transferItems = categorizedTransactions.filter((t) => t.isTransfer);
+  for (let i = 0; i < transferItems.length; i++) {
+    const itemA = transferItems[i];
+    if (itemA.transferStatus === 'linked') continue;
+
+    const matchB = transferItems.find(
+      (b, idx) => idx !== i &&
+        b.transferStatus !== 'linked' &&
+        Math.abs(b.amount - itemA.amount) < 0.01 &&
+        b.type !== itemA.type &&
+        b.date === itemA.date
+    );
+
+    if (matchB) {
+      itemA.transferStatus = 'linked';
+      itemA.transferLinkedId = matchB.tempId;
+      itemA.excludeFromReport = true;
+
+      matchB.transferStatus = 'linked';
+      matchB.transferLinkedId = itemA.tempId;
+      matchB.excludeFromReport = true;
+    }
+  }
+
+  const confirmedDuplicatesCount = categorizedTransactions.filter((t) => t.duplicateStatus === 'confirmed').length;
+  const possibleDuplicatesCount = categorizedTransactions.filter((t) => t.duplicateStatus === 'possible').length;
+  const needsReviewCount = categorizedTransactions.filter((t) => t.needsReview).length;
+  const transfersCount = categorizedTransactions.filter((t) => t.isTransfer).length;
 
   return {
     accountName,
-    totalRows: finalTransactions.length,
-    newItemsCount,
-    duplicatesCount,
+    totalRows: categorizedTransactions.length,
+    newItemsCount: categorizedTransactions.length - confirmedDuplicatesCount,
+    duplicatesCount: confirmedDuplicatesCount,
+    possibleDuplicatesCount,
+    needsReviewCount,
+    transfersCount,
     detectedColumns,
     headerRowIndex,
-    transactions: finalTransactions,
+    transactions: categorizedTransactions,
   };
 };
 
 /**
- * Confirm and save non-duplicate transactions into database (Batch Optimized)
+ * Confirm and save transactions with transfer handling, rule auto-learning, and duplicate skipping
  */
 export const confirmImport = async (transactions, autoCreateGroups = true) => {
   if (!Array.isArray(transactions) || transactions.length === 0) {
     throw new Error('No transactions provided for import');
   }
 
-  // Only import non-duplicate and selected items
-  const validItems = transactions.filter((t) => t.selected && !t.isDuplicate);
+  // Only import non-duplicate (or user-approved) and selected items
+  const validItems = transactions.filter((t) => t.selected && t.duplicateStatus !== 'confirmed');
 
   if (validItems.length === 0) {
     return { success: true, count: 0, message: 'All transactions were duplicates or unselected' };
   }
 
-  // 1. If autoCreateGroups is true, batch-sync distinct categories and groups
+  // 1. Auto-create missing categories and groups if enabled
   if (autoCreateGroups) {
     const distinctPairs = new Map();
     for (const item of validItems) {
-      if (item.category) {
+      if (item.category && item.category !== 'Needs review') {
         const cat = item.category.trim();
         const grp = item.group ? item.group.trim() : null;
         if (!distinctPairs.has(cat)) {
@@ -504,7 +545,7 @@ export const confirmImport = async (transactions, autoCreateGroups = true) => {
           data: {
             name: catName,
             type: 'expense',
-            description: 'Auto-created during statement import',
+            description: 'Created during statement import',
           },
           include: { groups: true },
         });
@@ -521,7 +562,7 @@ export const confirmImport = async (transactions, autoCreateGroups = true) => {
             data: newGroupsToCreate.map((g) => ({
               name: g,
               categoryId: cat.id,
-              description: 'Auto-categorized from bank narration',
+              description: 'Auto-categorized from narration',
             })),
           });
         }
@@ -529,18 +570,24 @@ export const confirmImport = async (transactions, autoCreateGroups = true) => {
     }
   }
 
-  // 2. High-speed batch insert into transactions table with duplicate skipping
+  // 2. High-speed insert with duplicate skipping
   const recordsToInsert = validItems.map((item) => ({
     date: item.date,
     description: item.description,
     remarks: item.rawRemarks || item.description,
-    category: item.category || 'Other',
+    category: item.category || 'Needs review',
     group: item.group || null,
     amount: Number(item.amount),
     type: item.type,
     account: item.account || 'ICICI',
     reference: item.reference,
     balance: item.balance || null,
+    needsReview: Boolean(item.needsReview),
+    confidence: item.confidence || 'rule',
+    matchedRuleId: item.matchedRuleId || null,
+    isTransfer: Boolean(item.isTransfer),
+    transferStatus: item.transferStatus || null,
+    excludeFromReport: Boolean(item.excludeFromReport),
   }));
 
   const result = await prisma.transaction.createMany({
@@ -560,7 +607,6 @@ export const importService = {
   detectColumns,
   generateReference,
   extractDetails,
-  matchCategoryAndGroup,
   preview,
   confirmImport,
 };
