@@ -425,17 +425,43 @@ export const preview = async (bufferOrString) => {
 
     // 3. Rule-based Categorization (Section 5.4)
     const catMatch = ruleService.matchTransactionWithRules(
-      { rawRemarks: t.rawRemarks, description: t.description, account: t.account },
+      {
+        rawRemarks: t.rawRemarks,
+        description: t.description,
+        account: t.account,
+        detectedKeyword: t.detectedKeyword,
+      },
       rules,
       dbCategories
     );
 
-    // 4. Transfer Detection (Section 5.6):
+    let finalCategory = catMatch.category;
+    let finalGroup = catMatch.group;
+    let finalNeedsReview = catMatch.needsReview;
+    let finalConfidence = catMatch.confidence;
+    let finalMatchedRuleId = catMatch.matchedRuleId;
+
+    // Recognized Dividend credits (ACH/CMS or detectedKeyword 'dividend')
+    if (
+      t.detectedKeyword === 'dividend' ||
+      (t.type === 'income' && (/^ach\//i.test(t.rawRemarks) || /^cms\//i.test(t.rawRemarks)))
+    ) {
+      finalCategory = 'Dividend';
+      finalGroup = 'Dividends';
+      finalNeedsReview = false;
+      finalConfidence = 'high';
+    }
+
+    // 4. Transfer & Self Detection (Section 5.6):
     // Check if category is Transfer or remarks indicate self transfer
-    const lowerComb = `${t.rawRemarks} ${t.description}`.toLowerCase();
-    const isTransferDetected = catMatch.isTransfer ||
+    const lowerComb = `${t.rawRemarks || ''} ${t.description || ''}`.toLowerCase();
+    const isSelfDetected =
+      finalCategory.toLowerCase() === 'transfer' ||
+      catMatch.isTransfer ||
+      /\bself\b/i.test(lowerComb) ||
       lowerComb.includes('self transfer') ||
       lowerComb.includes('own account') ||
+      lowerComb.includes('internal transfer') ||
       lowerComb.includes('to sbi') ||
       lowerComb.includes('from sbi') ||
       lowerComb.includes('to icici') ||
@@ -443,14 +469,15 @@ export const preview = async (bufferOrString) => {
 
     categorizedTransactions.push({
       ...t,
-      category: isTransferDetected ? 'Transfer' : catMatch.category,
-      group: catMatch.group || (isTransferDetected ? 'Internal Transfer' : null),
-      confidence: isTransferDetected ? 'high' : catMatch.confidence,
-      matchedRuleId: catMatch.matchedRuleId,
-      needsReview: isTransferDetected ? false : catMatch.needsReview,
-      isTransfer: isTransferDetected,
-      transferStatus: isTransferDetected ? 'one_sided' : null,
-      excludeFromReport: isTransferDetected, // Exclude internal transfer by default from spending reports
+      category: isSelfDetected ? 'Transfer' : finalCategory,
+      group: isSelfDetected ? 'Internal Transfer' : finalGroup,
+      confidence: isSelfDetected ? 'high' : finalConfidence,
+      matchedRuleId: finalMatchedRuleId,
+      needsReview: isSelfDetected ? false : finalNeedsReview,
+      isTransfer: isSelfDetected,
+      isSelf: isSelfDetected,
+      transferStatus: isSelfDetected ? 'self' : null,
+      excludeFromReport: isSelfDetected, // Exclude internal transfer by default from spending reports
       duplicateStatus,
       duplicateReason,
       isDuplicate: duplicateStatus === 'confirmed',

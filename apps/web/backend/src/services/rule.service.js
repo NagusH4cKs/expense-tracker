@@ -25,10 +25,15 @@ export const testPattern = (targetText, pattern, matchType = 'contains') => {
     case 'exact':
       return normalizedTarget === normalizedPattern;
 
-    case 'prefix':
-      // Check if target starts with pattern token
-      return normalizedTarget.startsWith(normalizedPattern) ||
-        targetText.toLowerCase().trim().startsWith(pattern.toLowerCase().trim());
+    case 'prefix': {
+      const p = normalizeText(pattern).trim();
+      if (!p) return false;
+      const escaped = p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Matches ^prefix(\s+|-|/|$) or after delimiter (/|:|-)\s*prefix(\s+|-|/|$)
+      const prefixRegex = new RegExp(`(?:^|[\\/\\-:])\\s*${escaped}(?:\\s+|-|\\/|$)`, 'i');
+
+      return prefixRegex.test(targetText) || prefixRegex.test(normalizedTarget);
+    }
 
     case 'regex':
       try {
@@ -43,13 +48,23 @@ export const testPattern = (targetText, pattern, matchType = 'contains') => {
       // Split pattern by comma or semicolon to allow multi-keyword patterns
       const tokens = pattern
         .split(/[,;]/)
-        .map((t) => normalizeText(t))
+        .map((t) => normalizeText(t).trim())
         .filter(Boolean);
 
       if (tokens.length === 0) return false;
       return tokens.some((token) => {
-        // Use word boundary or direct inclusion
-        return normalizedTarget.includes(token);
+        if (!token) return false;
+        const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Word boundary match: surrounded by start/end or whitespace/delimiters
+        const wordRegex = new RegExp(`(?:^|[\\s\\/\\-:])${escaped}(?:[\\s\\/\\-:]|$)`, 'i');
+        if (wordRegex.test(targetText) || wordRegex.test(normalizedTarget)) {
+          return true;
+        }
+        // Multi-word phrase fallback match
+        if (token.includes(' ') && normalizedTarget.includes(token)) {
+          return true;
+        }
+        return false;
       });
     }
   }
@@ -59,10 +74,11 @@ export const testPattern = (targetText, pattern, matchType = 'contains') => {
  * Match a transaction description & remarks against active rules
  */
 export const matchTransactionWithRules = (transaction, rules = [], dbCategories = []) => {
-  const { rawRemarks = '', description = '', account = '' } = transaction;
+  const { rawRemarks = '', description = '', account = '', detectedKeyword = '' } = transaction;
   const remarksNorm = normalizeText(rawRemarks);
   const descNorm = normalizeText(description);
-  const combined = `${remarksNorm} ${descNorm}`.trim();
+  const keywordNorm = normalizeText(detectedKeyword);
+  const combined = `${remarksNorm} ${descNorm} ${keywordNorm}`.trim();
 
   // Sort rules: Bank-specific first (if matches account), then by priority descending
   const sortedRules = [...rules]
@@ -77,12 +93,20 @@ export const matchTransactionWithRules = (transaction, rules = [], dbCategories 
   for (const rule of sortedRules) {
     let matched = false;
 
-    // Check rawRemarks and combined description
+    // Check rawRemarks, combined description, and detectedKeyword
     if (rule.matchType === 'prefix') {
-      matched = testPattern(rawRemarks, rule.pattern, 'prefix') || testPattern(remarksNorm, rule.pattern, 'prefix');
+      matched =
+        testPattern(rawRemarks, rule.pattern, 'prefix') ||
+        testPattern(remarksNorm, rule.pattern, 'prefix') ||
+        testPattern(description, rule.pattern, 'prefix') ||
+        testPattern(descNorm, rule.pattern, 'prefix') ||
+        testPattern(detectedKeyword, rule.pattern, 'prefix');
     } else {
-      matched = testPattern(combined, rule.pattern, rule.matchType) ||
-                testPattern(rawRemarks, rule.pattern, rule.matchType);
+      matched =
+        testPattern(combined, rule.pattern, rule.matchType) ||
+        testPattern(rawRemarks, rule.pattern, rule.matchType) ||
+        testPattern(description, rule.pattern, rule.matchType) ||
+        testPattern(detectedKeyword, rule.pattern, rule.matchType);
     }
 
     if (matched) {

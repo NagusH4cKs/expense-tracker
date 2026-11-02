@@ -1219,13 +1219,21 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                         <EditRoundedIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
-                    <Tooltip title="Delete">
+                    <Tooltip title="Delete transaction" arrow>
                       <IconButton
                         size="small"
                         onClick={() => onDelete(t.id)}
                         sx={{
-                          color: '#94a3b8',
-                          '&:hover': { color: 'error.main', bgcolor: '#fee2e2' },
+                          color: '#ef4444',
+                          bgcolor: '#fff1f2',
+                          border: '1px solid #fecdd3',
+                          p: 0.6,
+                          transition: 'all 0.2s',
+                          '&:hover': {
+                            color: '#ffffff',
+                            bgcolor: '#dc2626',
+                            borderColor: '#dc2626',
+                          },
                         }}
                       >
                         <DeleteOutlineRoundedIcon fontSize="small" />

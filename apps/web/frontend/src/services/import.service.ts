@@ -19,7 +19,8 @@ export interface ParsedTransactionPreview {
   needsReview?: boolean;
   matchedRuleId?: string | null;
   isTransfer?: boolean;
-  transferStatus?: 'linked' | 'one_sided' | null;
+  isSelf?: boolean;
+  transferStatus?: 'linked' | 'one_sided' | 'self' | null;
   transferLinkedId?: string | null;
   excludeFromReport?: boolean;
   duplicateStatus?: 'none' | 'possible' | 'confirmed';
@@ -93,7 +94,7 @@ export const importService = {
     autoCreateGroups = true,
     onProgress?: (progress: ImportProgress) => void,
   ): Promise<ImportConfirmResponse> {
-    const selected = transactions.filter((item) => item.selected && !item.isDuplicate);
+    const selected = transactions.filter((item) => item.selected && item.duplicateStatus !== 'confirmed');
     const batchCount = Math.ceil(selected.length / IMPORT_BATCH_SIZE);
     let importedCount = 0;
     let completed = 0;

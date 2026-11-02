@@ -32,6 +32,7 @@ import {
   DialogActions,
   TextField,
   Switch,
+  Snackbar,
 } from '@mui/material';
 import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
 import TableChartRoundedIcon from '@mui/icons-material/TableChartRounded';
@@ -47,6 +48,9 @@ import BlockRoundedIcon from '@mui/icons-material/BlockRounded';
 import BookmarkAddRoundedIcon from '@mui/icons-material/BookmarkAddRounded';
 import SwapHorizRoundedIcon from '@mui/icons-material/SwapHorizRounded';
 import SyncAltRoundedIcon from '@mui/icons-material/SyncAltRounded';
+import DeleteOutlineRoundedIcon from '@mui/icons-material/DeleteOutlineRounded';
+import FilterAltRoundedIcon from '@mui/icons-material/FilterAltRounded';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 
 import { importService, IMPORT_BATCH_SIZE, importTimeout, ImportPreviewResponse, ImportProgress, ParsedTransactionPreview } from '../services/import.service';
 import { categoryService } from '../services/category.service';
@@ -82,6 +86,10 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
 
   // Confirmation Result
   const [importResult, setImportResult] = useState<{ importedCount: number; totalReceived: number } | null>(null);
+  const [removedItemSnackbar, setRemovedItemSnackbar] = useState<string | null>(null);
+
+  // Active filter for review table: 'all' | 'ready' | 'needs_review' | 'possible_dup' | 'confirmed_dup' | 'self'
+  const [activeFilter, setActiveFilter] = useState<'all' | 'ready' | 'needs_review' | 'possible_dup' | 'confirmed_dup' | 'self'>('all');
 
   // Load Categories for the manual dropdown
   useEffect(() => {
@@ -234,10 +242,96 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
     );
   };
 
-  // Toggle All Selection (excluding confirmed duplicates)
+  // Toggle All Selection for currently visible/filtered transactions (excluding confirmed duplicates)
   const handleToggleSelectAll = (checked: boolean) => {
+    const visibleIds = new Set(filteredTransactions.map((t) => t.tempId));
     setTransactions((prev) =>
-      prev.map((t) => (t.duplicateStatus === 'confirmed' ? t : { ...t, selected: checked }))
+      prev.map((t) => {
+        if (visibleIds.has(t.tempId) && t.duplicateStatus !== 'confirmed') {
+          return { ...t, selected: checked };
+        }
+        return t;
+      })
+    );
+  };
+
+  // Delete / Remove transaction row from import preview with 1 icon click
+  const handleDeleteRow = (tempId: string, description: string) => {
+    setTransactions((prev) => prev.filter((t) => t.tempId !== tempId));
+    setRemovedItemSnackbar(`Removed "${description || 'transaction'}" from import`);
+  };
+
+  // Change Status manually (Ready, Needs Review, Possible Dup, Confirmed Dup, Self)
+  const handleStatusChange = (
+    tempId: string,
+    newStatus: 'ready' | 'needs_review' | 'possible_dup' | 'confirmed_dup' | 'self'
+  ) => {
+    setTransactions((prev) =>
+      prev.map((t) => {
+        if (t.tempId !== tempId) return t;
+
+        switch (newStatus) {
+          case 'self':
+            return {
+              ...t,
+              isSelf: true,
+              isTransfer: true,
+              transferStatus: 'self',
+              category: 'Transfer',
+              group: 'Internal Transfer',
+              duplicateStatus: 'none',
+              isDuplicate: false,
+              needsReview: false,
+              excludeFromReport: true,
+              selected: true,
+            };
+
+          case 'ready':
+            return {
+              ...t,
+              isSelf: false,
+              isTransfer: false,
+              duplicateStatus: 'none',
+              isDuplicate: false,
+              needsReview: false,
+              selected: true,
+              category: t.category === 'Needs review' || t.category === 'Transfer' ? 'Others' : t.category,
+            };
+
+          case 'needs_review':
+            return {
+              ...t,
+              isSelf: false,
+              duplicateStatus: 'none',
+              isDuplicate: false,
+              needsReview: true,
+              selected: true,
+            };
+
+          case 'possible_dup':
+            return {
+              ...t,
+              isSelf: false,
+              duplicateStatus: 'possible',
+              isDuplicate: true,
+              needsReview: true,
+              selected: true,
+            };
+
+          case 'confirmed_dup':
+            return {
+              ...t,
+              isSelf: false,
+              duplicateStatus: 'confirmed',
+              isDuplicate: true,
+              needsReview: false,
+              selected: false,
+            };
+
+          default:
+            return t;
+        }
+      })
     );
   };
 
@@ -268,12 +362,50 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
     }
   };
 
+  const isConfirmedDup = (t: ParsedTransactionPreview) => t.duplicateStatus === 'confirmed';
+  const isPossibleDup = (t: ParsedTransactionPreview) => t.duplicateStatus === 'possible';
+  const isSelf = (t: ParsedTransactionPreview) =>
+    Boolean(
+      t.isSelf ||
+      t.transferStatus === 'self' ||
+      t.category === 'Transfer' ||
+      /\bself\b/i.test(`${t.description || ''} ${t.rawRemarks || ''}`) ||
+      `${t.description || ''} ${t.rawRemarks || ''}`.toLowerCase().includes('own account')
+    );
+  const isReview = (t: ParsedTransactionPreview) =>
+    !isSelf(t) && (t.needsReview || t.category === 'Needs review');
+  const isCleanReady = (t: ParsedTransactionPreview) =>
+    !isConfirmedDup(t) && !isPossibleDup(t) && !isSelf(t) && !isReview(t);
+
   const selectedCount = transactions.filter((t) => t.selected && t.duplicateStatus !== 'confirmed').length;
-  const confirmedDuplicatesCount = transactions.filter((t) => t.duplicateStatus === 'confirmed').length;
-  const possibleDuplicatesCount = transactions.filter((t) => t.duplicateStatus === 'possible').length;
-  const needsReviewCount = transactions.filter((t) => t.needsReview || t.category === 'Needs review').length;
-  const transfersCount = transactions.filter((t) => t.isTransfer).length;
+  const confirmedDuplicatesCount = transactions.filter(isConfirmedDup).length;
+  const possibleDuplicatesCount = transactions.filter(isPossibleDup).length;
+  const selfCount = transactions.filter(isSelf).length;
+  const needsReviewCount = transactions.filter(isReview).length;
+  const readyCount = transactions.filter(isCleanReady).length;
   const newGroupCount = transactions.filter((t) => t.isNewGroup).length;
+
+  const filteredTransactions = transactions.filter((t) => {
+    switch (activeFilter) {
+      case 'self':
+        return isSelf(t);
+      case 'needs_review':
+        return isReview(t);
+      case 'possible_dup':
+        return isPossibleDup(t);
+      case 'confirmed_dup':
+        return isConfirmedDup(t);
+      case 'ready':
+        return isCleanReady(t);
+      case 'all':
+      default:
+        return true;
+    }
+  });
+
+  const handleFilterClick = (filter: 'all' | 'ready' | 'needs_review' | 'possible_dup' | 'confirmed_dup' | 'self') => {
+    setActiveFilter((prev) => (prev === filter ? 'all' : filter));
+  };
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3.5, pb: 6 }}>
@@ -571,46 +703,173 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
             }}
           >
             <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
-              <Chip
-                label={`Total: ${transactions.length}`}
-                variant="outlined"
-                sx={{ fontWeight: 600, fontSize: '0.85rem' }}
-              />
-              <Chip
-                label={`Ready to Import: ${selectedCount}`}
-                color="success"
-                sx={{ fontWeight: 700, fontSize: '0.85rem' }}
-              />
+              <Tooltip title={activeFilter === 'all' ? 'Currently showing all transactions' : 'Click to filter: Show all transactions'} arrow>
+                <Chip
+                  label={`Total: ${transactions.length}`}
+                  variant={activeFilter === 'all' ? 'filled' : 'outlined'}
+                  clickable
+                  onClick={() => handleFilterClick('all')}
+                  sx={{
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    ...(activeFilter === 'all'
+                      ? {
+                          bgcolor: '#1e293b',
+                          color: '#ffffff',
+                          boxShadow: '0 3px 10px rgba(30, 41, 59, 0.25)',
+                          transform: 'scale(1.03)',
+                        }
+                      : {
+                          borderColor: '#cbd5e1',
+                          color: '#475569',
+                          '&:hover': { bgcolor: '#f1f5f9', transform: 'translateY(-1px)' },
+                        }),
+                  }}
+                />
+              </Tooltip>
+
+              <Tooltip title={activeFilter === 'ready' ? 'Currently showing ready transactions' : 'Click to filter: Ready to import'} arrow>
+                <Chip
+                  label={`Ready to Import: ${readyCount}`}
+                  color="success"
+                  variant={activeFilter === 'ready' ? 'filled' : 'outlined'}
+                  clickable
+                  onClick={() => handleFilterClick('ready')}
+                  sx={{
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                    ...(activeFilter === 'ready'
+                      ? {
+                          bgcolor: '#10b981',
+                          color: '#ffffff',
+                          boxShadow: '0 0 0 2px #ffffff, 0 0 0 4px #10b981, 0 4px 12px rgba(16, 185, 129, 0.35)',
+                          transform: 'scale(1.04)',
+                        }
+                      : {
+                          '&:hover': { transform: 'translateY(-1px)', bgcolor: '#ecfdf5' },
+                        }),
+                  }}
+                />
+              </Tooltip>
+
               {confirmedDuplicatesCount > 0 && (
-                <Chip
-                  icon={<BlockRoundedIcon />}
-                  label={`Confirmed Duplicates: ${confirmedDuplicatesCount}`}
-                  color="error"
-                  sx={{ fontWeight: 700, fontSize: '0.85rem' }}
-                />
+                <Tooltip title={activeFilter === 'confirmed_dup' ? 'Currently showing confirmed duplicates' : 'Click to filter: Confirmed duplicates'} arrow>
+                  <Chip
+                    icon={<BlockRoundedIcon />}
+                    label={`Confirmed Duplicates: ${confirmedDuplicatesCount}`}
+                    color="error"
+                    variant={activeFilter === 'confirmed_dup' ? 'filled' : 'outlined'}
+                    clickable
+                    onClick={() => handleFilterClick('confirmed_dup')}
+                    sx={{
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                      ...(activeFilter === 'confirmed_dup'
+                        ? {
+                            bgcolor: '#ef4444',
+                            color: '#ffffff',
+                            boxShadow: '0 0 0 2px #ffffff, 0 0 0 4px #ef4444, 0 4px 12px rgba(239, 68, 68, 0.35)',
+                            transform: 'scale(1.04)',
+                          }
+                        : {
+                            '&:hover': { transform: 'translateY(-1px)', bgcolor: '#fff1f2' },
+                          }),
+                    }}
+                  />
+                </Tooltip>
               )}
+
               {possibleDuplicatesCount > 0 && (
-                <Chip
-                  icon={<WarningAmberRoundedIcon />}
-                  label={`Possible Duplicates: ${possibleDuplicatesCount}`}
-                  color="warning"
-                  sx={{ fontWeight: 700, fontSize: '0.85rem' }}
-                />
+                <Tooltip title={activeFilter === 'possible_dup' ? 'Currently showing possible duplicates' : 'Click to filter: Possible duplicates'} arrow>
+                  <Chip
+                    icon={<WarningAmberRoundedIcon />}
+                    label={`Possible Duplicates: ${possibleDuplicatesCount}`}
+                    color="warning"
+                    variant={activeFilter === 'possible_dup' ? 'filled' : 'outlined'}
+                    clickable
+                    onClick={() => handleFilterClick('possible_dup')}
+                    sx={{
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                      ...(activeFilter === 'possible_dup'
+                        ? {
+                            bgcolor: '#f59e0b',
+                            color: '#ffffff',
+                            boxShadow: '0 0 0 2px #ffffff, 0 0 0 4px #f59e0b, 0 4px 12px rgba(245, 158, 11, 0.35)',
+                            transform: 'scale(1.04)',
+                          }
+                        : {
+                            '&:hover': { transform: 'translateY(-1px)', bgcolor: '#fffbeb' },
+                          }),
+                    }}
+                  />
+                </Tooltip>
               )}
-              {needsReviewCount > 0 && (
-                <Chip
-                  icon={<WarningAmberRoundedIcon />}
-                  label={`Needs Review: ${needsReviewCount}`}
-                  sx={{ fontWeight: 700, fontSize: '0.85rem', bgcolor: '#fffbeb', color: '#b45309', border: '1px solid #fde68a' }}
-                />
+
+              {(needsReviewCount > 0 || activeFilter === 'needs_review') && (
+                <Tooltip title={activeFilter === 'needs_review' ? 'Currently showing transactions needing review' : 'Click to filter: Needs review'} arrow>
+                  <Chip
+                    icon={<WarningAmberRoundedIcon />}
+                    label={`Needs Review: ${needsReviewCount}`}
+                    clickable
+                    onClick={() => handleFilterClick('needs_review')}
+                    sx={{
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                      bgcolor: activeFilter === 'needs_review' ? '#d97706' : '#fffbeb',
+                      color: activeFilter === 'needs_review' ? '#ffffff' : '#b45309',
+                      border: '1px solid',
+                      borderColor: activeFilter === 'needs_review' ? '#d97706' : '#fde68a',
+                      ...(activeFilter === 'needs_review'
+                        ? {
+                            boxShadow: '0 0 0 2px #ffffff, 0 0 0 4px #d97706, 0 4px 12px rgba(217, 119, 6, 0.35)',
+                            transform: 'scale(1.04)',
+                          }
+                        : {
+                            '&:hover': { transform: 'translateY(-1px)', bgcolor: '#fef3c7' },
+                          }),
+                    }}
+                  />
+                </Tooltip>
               )}
-              {transfersCount > 0 && (
-                <Chip
-                  icon={<SyncAltRoundedIcon />}
-                  label={`Transfers: ${transfersCount}`}
-                  color="info"
-                  sx={{ fontWeight: 700, fontSize: '0.85rem' }}
-                />
+
+              {selfCount > 0 && (
+                <Tooltip title={activeFilter === 'self' ? 'Currently showing self transactions' : 'Click to filter: Self transactions'} arrow>
+                  <Chip
+                    icon={<SyncAltRoundedIcon />}
+                    label={`Self: ${selfCount}`}
+                    clickable
+                    onClick={() => handleFilterClick('self')}
+                    sx={{
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                      bgcolor: activeFilter === 'self' ? '#7c3aed' : '#ede9fe',
+                      color: activeFilter === 'self' ? '#ffffff' : '#6d28d9',
+                      border: '1px solid',
+                      borderColor: activeFilter === 'self' ? '#7c3aed' : '#ddd6fe',
+                      ...(activeFilter === 'self'
+                        ? {
+                            boxShadow: '0 0 0 2px #ffffff, 0 0 0 4px #7c3aed, 0 4px 12px rgba(124, 58, 237, 0.35)',
+                            transform: 'scale(1.04)',
+                          }
+                        : {
+                            '&:hover': { transform: 'translateY(-1px)', bgcolor: '#ddd6fe' },
+                          }),
+                    }}
+                  />
+                </Tooltip>
               )}
             </Box>
 
@@ -647,14 +906,101 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
               bgcolor: '#ffffff',
             }}
           >
+            {/* Active Filter Bar */}
+            {activeFilter !== 'all' && (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  px: 3,
+                  py: 1.2,
+                  bgcolor:
+                    activeFilter === 'self'
+                      ? '#f5f3ff'
+                      : activeFilter === 'needs_review'
+                      ? '#fffbeb'
+                      : activeFilter === 'possible_dup'
+                      ? '#fff7ed'
+                      : activeFilter === 'confirmed_dup'
+                      ? '#fff1f2'
+                      : '#f0fdf4',
+                  borderBottom: '1px solid #e2e8f0',
+                }}
+              >
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <FilterAltRoundedIcon
+                    fontSize="small"
+                    sx={{
+                      color:
+                        activeFilter === 'self'
+                          ? '#7c3aed'
+                          : activeFilter === 'needs_review'
+                          ? '#b45309'
+                          : activeFilter === 'possible_dup'
+                          ? '#c2410c'
+                          : activeFilter === 'confirmed_dup'
+                          ? '#b91c1c'
+                          : '#15803d',
+                    }}
+                  />
+                  <Typography variant="body2" sx={{ fontWeight: 700, fontSize: '0.82rem', color: '#1e293b' }}>
+                    Showing {filteredTransactions.length} of {transactions.length} transactions
+                    <span style={{ fontWeight: 500, color: '#64748b', marginLeft: 6 }}>
+                      (Filter:{' '}
+                      <strong style={{ color: '#0f172a' }}>
+                        {activeFilter === 'self'
+                          ? 'Self'
+                          : activeFilter === 'needs_review'
+                          ? 'Needs Review'
+                          : activeFilter === 'possible_dup'
+                          ? 'Possible Duplicates'
+                          : activeFilter === 'confirmed_dup'
+                          ? 'Confirmed Duplicates'
+                          : 'Ready to Import'}
+                      </strong>
+                      )
+                    </span>
+                  </Typography>
+                </Box>
+                <Button
+                  size="small"
+                  onClick={() => setActiveFilter('all')}
+                  startIcon={<CloseRoundedIcon sx={{ fontSize: 15 }} />}
+                  sx={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    py: 0.3,
+                    color: '#475569',
+                    bgcolor: '#ffffff',
+                    border: '1px solid #cbd5e1',
+                    borderRadius: 2,
+                    '&:hover': { bgcolor: '#f1f5f9' },
+                  }}
+                >
+                  Show All ({transactions.length})
+                </Button>
+              </Box>
+            )}
+
             <TableContainer sx={{ maxHeight: 620 }}>
               <Table stickyHeader size="small">
                 <TableHead>
                   <TableRow>
                     <TableCell padding="checkbox">
                       <Checkbox
-                        indeterminate={selectedCount > 0 && selectedCount < transactions.filter((t) => t.duplicateStatus !== 'confirmed').length}
-                        checked={selectedCount > 0 && selectedCount === transactions.filter((t) => t.duplicateStatus !== 'confirmed').length}
+                        indeterminate={
+                          filteredTransactions.filter((t) => t.duplicateStatus !== 'confirmed').length > 0 &&
+                          filteredTransactions.filter((t) => t.duplicateStatus !== 'confirmed' && t.selected).length > 0 &&
+                          filteredTransactions.filter((t) => t.duplicateStatus !== 'confirmed' && t.selected).length <
+                            filteredTransactions.filter((t) => t.duplicateStatus !== 'confirmed').length
+                        }
+                        checked={
+                          filteredTransactions.filter((t) => t.duplicateStatus !== 'confirmed').length > 0 &&
+                          filteredTransactions.filter((t) => t.duplicateStatus !== 'confirmed' && t.selected).length ===
+                            filteredTransactions.filter((t) => t.duplicateStatus !== 'confirmed').length
+                        }
                         onChange={(e) => handleToggleSelectAll(e.target.checked)}
                       />
                     </TableCell>
@@ -671,16 +1017,53 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                     <TableCell sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary', minWidth: 160 }}>
                       TRANSFER / EXCLUSION
                     </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary' }}>STATUS</TableCell>
+                    <TableCell align="center" sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary', minWidth: 155 }}>STATUS</TableCell>
+                    <TableCell align="center" sx={{ fontWeight: 700, fontSize: '0.75rem', color: 'text.secondary', width: 64 }}>ACTION</TableCell>
                   </TableRow>
                 </TableHead>
 
                 <TableBody>
-                  {transactions.map((t) => {
+                  {filteredTransactions.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={9} align="center" sx={{ py: 7 }}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1.5 }}>
+                          <CheckCircleRoundedIcon sx={{ fontSize: 48, color: '#10b981' }} />
+                          <Typography variant="subtitle1" sx={{ fontWeight: 700, color: '#1e293b' }}>
+                            {activeFilter === 'self'
+                              ? 'No Self Transactions'
+                              : activeFilter === 'needs_review'
+                              ? 'All Transactions Reviewed! 🎉'
+                              : activeFilter === 'confirmed_dup'
+                              ? 'No Confirmed Duplicates'
+                              : activeFilter === 'possible_dup'
+                              ? 'No Possible Duplicates'
+                              : 'No transactions found for this filter'}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420 }}>
+                            {activeFilter === 'self'
+                              ? 'All self transactions have been removed or resolved.'
+                              : activeFilter === 'needs_review'
+                              ? 'Every transaction in this statement has been categorized and verified.'
+                              : 'There are no transactions matching the selected filter criteria.'}
+                          </Typography>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={() => setActiveFilter('all')}
+                            sx={{ mt: 1, fontWeight: 700, textTransform: 'none', borderRadius: 2 }}
+                          >
+                            View All Transactions ({transactions.length})
+                          </Button>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    filteredTransactions.map((t) => {
                     const isExpense = t.type === 'expense';
                     const isConfirmedDup = t.duplicateStatus === 'confirmed';
                     const isPossibleDup = t.duplicateStatus === 'possible';
-                    const isReview = t.needsReview || t.category === 'Needs review';
+                    const isRowSelf = isSelf(t);
+                    const isReviewRow = !isRowSelf && (t.needsReview || t.category === 'Needs review');
                     const availableGroups = categories.find((c) => c.name === t.category)?.groups || [];
 
                     return (
@@ -694,6 +1077,8 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                             ? '#fff1f2'
                             : isPossibleDup
                             ? '#fffbeb'
+                            : isRowSelf
+                            ? '#faf5ff'
                             : t.selected
                             ? 'rgba(79, 70, 229, 0.02)'
                             : 'inherit',
@@ -876,58 +1261,140 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                           </Box>
                         </TableCell>
 
-                        {/* Status / Duplicate Pill */}
+                        {/* Interactive Status Selector */}
                         <TableCell align="center">
-                          {isConfirmedDup ? (
-                            <Tooltip title={t.duplicateReason || 'Exact duplicate found in database. Will be skipped.'}>
-                              <Chip
-                                icon={<BlockRoundedIcon fontSize="small" />}
-                                label="Confirmed Dup"
-                                size="small"
-                                color="error"
-                                sx={{ height: 22, fontSize: '0.68rem', fontWeight: 700 }}
-                              />
-                            </Tooltip>
-                          ) : isPossibleDup ? (
-                            <Tooltip title={t.duplicateReason || 'Possible duplicate based on similar amount and date.'}>
-                              <Chip
-                                icon={<WarningAmberRoundedIcon fontSize="small" />}
-                                label="Possible Dup"
-                                size="small"
-                                color="warning"
-                                sx={{ height: 22, fontSize: '0.68rem', fontWeight: 700 }}
-                              />
-                            </Tooltip>
-                          ) : isReview ? (
-                            <Tooltip title="Unmatched or low-confidence pattern. Please verify category.">
-                              <Chip
-                                icon={<WarningAmberRoundedIcon fontSize="small" />}
-                                label="Needs Review"
-                                size="small"
-                                sx={{
-                                  height: 22,
-                                  fontSize: '0.68rem',
-                                  fontWeight: 700,
-                                  bgcolor: '#fffbeb',
-                                  color: '#b45309',
-                                  border: '1px solid #fde68a',
-                                }}
-                              />
-                            </Tooltip>
-                          ) : (
-                            <Chip
-                              icon={<CheckRoundedIcon fontSize="small" />}
-                              label="Ready"
-                              size="small"
-                              color="success"
-                              variant="outlined"
-                              sx={{ height: 22, fontSize: '0.68rem', fontWeight: 600 }}
-                            />
+                          <FormControl size="small" sx={{ width: '100%', minWidth: 145 }}>
+                            <Select
+                              value={
+                                isConfirmedDup
+                                  ? 'confirmed_dup'
+                                  : isPossibleDup
+                                  ? 'possible_dup'
+                                  : isRowSelf
+                                  ? 'self'
+                                  : isReviewRow
+                                  ? 'needs_review'
+                                  : 'ready'
+                              }
+                              onChange={(e) =>
+                                handleStatusChange(
+                                  t.tempId,
+                                  e.target.value as 'ready' | 'needs_review' | 'possible_dup' | 'confirmed_dup' | 'self'
+                                )
+                              }
+                              sx={{
+                                height: 28,
+                                fontSize: '0.74rem',
+                                fontWeight: 700,
+                                borderRadius: 2,
+                                bgcolor: isConfirmedDup
+                                  ? '#fff1f2'
+                                  : isPossibleDup
+                                  ? '#fff7ed'
+                                  : isRowSelf
+                                  ? '#ede9fe'
+                                  : isReviewRow
+                                  ? '#fffbeb'
+                                  : '#ecfdf5',
+                                color: isConfirmedDup
+                                  ? '#b91c1c'
+                                  : isPossibleDup
+                                  ? '#c2410c'
+                                  : isRowSelf
+                                  ? '#6d28d9'
+                                  : isReviewRow
+                                  ? '#b45309'
+                                  : '#047857',
+                                border: `1px solid ${
+                                  isConfirmedDup
+                                    ? '#fecdd3'
+                                    : isPossibleDup
+                                    ? '#fed7aa'
+                                    : isRowSelf
+                                    ? '#ddd6fe'
+                                    : isReviewRow
+                                    ? '#fde68a'
+                                    : '#a7f3d0'
+                                }`,
+                                '& .MuiSelect-select': {
+                                  py: 0.3,
+                                  px: 1,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 0.5,
+                                },
+                                '& .MuiOutlinedInput-notchedOutline': {
+                                  border: 'none',
+                                },
+                              }}
+                            >
+                              <MenuItem value="ready" sx={{ fontSize: '0.78rem', fontWeight: 600, color: '#047857' }}>
+                                <CheckRoundedIcon sx={{ mr: 0.8, color: '#059669', fontSize: 16 }} />
+                                Ready to Import
+                              </MenuItem>
+                              <MenuItem value="self" sx={{ fontSize: '0.78rem', fontWeight: 600, color: '#6d28d9' }}>
+                                <SyncAltRoundedIcon sx={{ mr: 0.8, color: '#7c3aed', fontSize: 16 }} />
+                                Self
+                              </MenuItem>
+                              <MenuItem value="needs_review" sx={{ fontSize: '0.78rem', fontWeight: 600, color: '#b45309' }}>
+                                <WarningAmberRoundedIcon sx={{ mr: 0.8, color: '#d97706', fontSize: 16 }} />
+                                Needs Review
+                              </MenuItem>
+                              <MenuItem value="possible_dup" sx={{ fontSize: '0.78rem', fontWeight: 600, color: '#c2410c' }}>
+                                <WarningAmberRoundedIcon sx={{ mr: 0.8, color: '#ea580c', fontSize: 16 }} />
+                                Possible Dup
+                              </MenuItem>
+                              <MenuItem value="confirmed_dup" sx={{ fontSize: '0.78rem', fontWeight: 600, color: '#b91c1c' }}>
+                                <BlockRoundedIcon sx={{ mr: 0.8, color: '#dc2626', fontSize: 16 }} />
+                                Confirmed Dup
+                              </MenuItem>
+                            </Select>
+                          </FormControl>
+                          {t.duplicateReason && (
+                            <Typography
+                              variant="caption"
+                              noWrap
+                              sx={{
+                                display: 'block',
+                                fontSize: '0.65rem',
+                                color: 'text.secondary',
+                                mt: 0.3,
+                                maxWidth: 155,
+                              }}
+                              title={t.duplicateReason}
+                            >
+                              {t.duplicateReason}
+                            </Typography>
                           )}
+                        </TableCell>
+
+                        {/* 1-Click Delete Action */}
+                        <TableCell align="center">
+                          <Tooltip title="Delete transaction from import" arrow>
+                            <IconButton
+                              size="small"
+                              onClick={() => handleDeleteRow(t.tempId, t.description)}
+                              sx={{
+                                color: '#ef4444',
+                                bgcolor: '#fff1f2',
+                                border: '1px solid #fecdd3',
+                                p: 0.6,
+                                transition: 'all 0.2s',
+                                '&:hover': {
+                                  color: '#ffffff',
+                                  bgcolor: '#dc2626',
+                                  borderColor: '#dc2626',
+                                },
+                              }}
+                            >
+                              <DeleteOutlineRoundedIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
                         </TableCell>
                       </TableRow>
                     );
-                  })}
+                  })
+                )}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -1081,6 +1548,23 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
           </DialogActions>
         </form>
       </Dialog>
+
+      {/* Snackbar feedback on row deletion */}
+      <Snackbar
+        open={Boolean(removedItemSnackbar)}
+        autoHideDuration={3000}
+        onClose={() => setRemovedItemSnackbar(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setRemovedItemSnackbar(null)}
+          severity="info"
+          variant="filled"
+          sx={{ width: '100%', fontWeight: 600 }}
+        >
+          {removedItemSnackbar}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

@@ -18,8 +18,13 @@ function startProcess(name, cwd, script, colorCode) {
   const proc = spawn(npmCommand, ['run', script], {
     cwd,
     shell: true,
-    stdio: ['inherit', 'pipe', 'pipe'],
-    env: { ...process.env, FORCE_COLOR: '1' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      FORCE_COLOR: '1',
+      CHECKPOINT_DISABLE: '1',
+      PRISMA_TELEMETRY_INFORMATION: 'false',
+    },
   });
 
   processes.push(proc);
