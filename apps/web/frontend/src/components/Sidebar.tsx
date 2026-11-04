@@ -26,7 +26,7 @@ import { useAuth } from '../context/AuthContext';
 
 export const DRAWER_WIDTH = 260;
 
-export type NavigationPage = 'dashboard' | 'transactions' | 'categories' | 'import';
+export type NavigationPage = 'dashboard' | 'transactions' | 'debts' | 'categories' | 'import';
 
 interface SidebarProps {
   mobileOpen: boolean;
@@ -57,9 +57,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
     {
       id: 'transactions' as const,
       path: '/transactions',
-      label: 'Transactions',
+      label: 'Income & Expenses',
       icon: <ReceiptLongRoundedIcon />,
     },
+    { id: 'debts' as const, path: '/debts', label: 'Debts', icon: <AccountBalanceWalletRoundedIcon /> },
     {
       id: 'categories' as const,
       path: '/categories',
@@ -108,7 +109,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.3)',
+            boxShadow: '0 4px 12px color-mix(in srgb, var(--app-primary) 30%, transparent)',
           }}
         >
           <AccountBalanceWalletRoundedIcon fontSize="small" />
@@ -154,17 +155,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     py: 1,
                     px: 1.5,
                     color: isActive ? 'primary.main' : 'text.primary',
-                    bgcolor: isActive ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                    bgcolor: isActive ? 'color-mix(in srgb, var(--app-primary) 8%, transparent)' : 'transparent',
                     fontWeight: isActive ? 600 : 500,
                     '&:hover': {
                       bgcolor: isActive
-                        ? 'rgba(79, 70, 229, 0.12)'
+                        ? 'color-mix(in srgb, var(--app-primary) 12%, transparent)'
                         : 'rgba(0, 0, 0, 0.04)',
                     },
                     '&.Mui-selected': {
-                      bgcolor: 'rgba(79, 70, 229, 0.08)',
+                      bgcolor: 'color-mix(in srgb, var(--app-primary) 8%, transparent)',
                       '&:hover': {
-                        bgcolor: 'rgba(79, 70, 229, 0.12)',
+                        bgcolor: 'color-mix(in srgb, var(--app-primary) 12%, transparent)',
                       },
                     },
                   }}

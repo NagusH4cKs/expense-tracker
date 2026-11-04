@@ -569,7 +569,7 @@ export const CategoriesPage: React.FC = () => {
                           height: 22,
                           fontSize: '0.75rem',
                           fontWeight: 700,
-                          bgcolor: rule.category === 'Transfer' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(79, 70, 229, 0.08)',
+                          bgcolor: rule.category === 'Transfer' ? 'rgba(59, 130, 246, 0.1)' : 'color-mix(in srgb, var(--app-primary) 8%, transparent)',
                           color: rule.category === 'Transfer' ? 'primary.dark' : 'primary.main',
                         }}
                       />

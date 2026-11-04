@@ -146,7 +146,7 @@ export const LoginPage: React.FC = () => {
           sx={{
             height: 6,
             width: '100%',
-            background: 'linear-gradient(90deg, #4f46e5, #8b5cf6, #06b6d4, #10b981)',
+            background: 'linear-gradient(90deg, var(--app-primary), color-mix(in srgb, var(--app-primary) 70%, #ffffff), #06b6d4, #10b981)',
           }}
         />
 
@@ -160,12 +160,12 @@ export const LoginPage: React.FC = () => {
                 mx: 'auto',
                 mb: 2,
                 borderRadius: 3,
-                background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+                background: 'linear-gradient(135deg, var(--app-primary) 0%, color-mix(in srgb, var(--app-primary) 72%, #ffffff) 100%)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 color: '#ffffff',
-                boxShadow: '0 8px 24px rgba(79, 70, 229, 0.35)',
+                boxShadow: '0 8px 24px color-mix(in srgb, var(--app-primary) 35%, transparent)',
               }}
             >
               <KeyRounded sx={{ fontSize: 30 }} />
@@ -219,7 +219,7 @@ export const LoginPage: React.FC = () => {
                 input: {
                   startAdornment: (
                     <InputAdornment position="start">
-                      <PersonRounded sx={{ color: '#6366f1' }} />
+                      <PersonRounded color="primary" />
                     </InputAdornment>
                   ),
                 },
@@ -241,7 +241,7 @@ export const LoginPage: React.FC = () => {
                 input: {
                   startAdornment: (
                     <InputAdornment position="start">
-                      <LockRounded sx={{ color: '#6366f1' }} />
+                      <LockRounded color="primary" />
                     </InputAdornment>
                   ),
                   endAdornment: (
@@ -273,12 +273,12 @@ export const LoginPage: React.FC = () => {
                 fontSize: '0.98rem',
                 fontWeight: 700,
                 borderRadius: 2.5,
-                background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
-                boxShadow: '0 8px 20px rgba(79, 70, 229, 0.35)',
+                background: 'linear-gradient(135deg, var(--app-primary) 0%, color-mix(in srgb, var(--app-primary) 72%, #ffffff) 100%)',
+                boxShadow: '0 8px 20px color-mix(in srgb, var(--app-primary) 35%, transparent)',
                 textTransform: 'none',
                 '&:hover': {
-                  background: 'linear-gradient(135deg, #4338ca 0%, #4f46e5 100%)',
-                  boxShadow: '0 10px 24px rgba(79, 70, 229, 0.45)',
+                  background: 'linear-gradient(135deg, color-mix(in srgb, var(--app-primary) 78%, #000000) 0%, var(--app-primary) 100%)',
+                  boxShadow: '0 10px 24px color-mix(in srgb, var(--app-primary) 45%, transparent)',
                 },
               }}
             >

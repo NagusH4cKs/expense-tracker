@@ -211,7 +211,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
       prev.map((t) => {
         if (t.tempId === tempId) {
           const matched = categories.find((c) => c.name === newCategory);
-          const defaultGroup = matched?.groups?.[0]?.name || t.group;
+          const defaultGroup = matched?.groups?.[0]?.name || '';
           const isTransferCat = newCategory.toLowerCase() === 'transfer';
           return {
             ...t,
@@ -337,12 +337,30 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
 
   // Confirm Import
   const handleConfirmImport = async () => {
+    const uncategorized = transactions.filter((transaction) =>
+      transaction.selected && transaction.duplicateStatus !== 'confirmed' && !isSelf(transaction) &&
+      !categories.some((category) => category.name === transaction.category)
+    );
+    if (uncategorized.length > 0) {
+      setError(`Choose a category from Category & Group Master for each selected row (${uncategorized.length} still need one).`);
+      return;
+    }
+
+    const masterAlignedTransactions = transactions.map((transaction) => {
+      const category = categories.find((item) => item.name === transaction.category);
+      const groupIsValid = category?.groups.some((group) => group.name === transaction.group);
+      return {
+        ...transaction,
+        group: groupIsValid ? transaction.group : (category?.groups[0]?.name || null),
+      };
+    });
+
     try {
       setLoading(true);
       setLoadingStage('import');
       setImportProgress({ completed: 0, total: selectedCount, imported: 0, batch: 1, batchCount: Math.ceil(selectedCount / IMPORT_BATCH_SIZE) });
       setError(null);
-      const res = await importService.confirm(transactions, true, setImportProgress);
+      const res = await importService.confirm(masterAlignedTransactions, true, setImportProgress);
       setImportResult({
         importedCount: res.importedCount,
         totalReceived: res.totalReceived,
@@ -500,7 +518,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
               width: 72,
               height: 72,
               borderRadius: '50%',
-              bgcolor: 'rgba(79, 70, 229, 0.08)',
+              bgcolor: 'color-mix(in srgb, var(--app-primary) 8%, transparent)',
               color: 'primary.main',
               display: 'flex',
               alignItems: 'center',
@@ -855,13 +873,13 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                       fontSize: '0.85rem',
                       cursor: 'pointer',
                       transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-                      bgcolor: activeFilter === 'self' ? '#7c3aed' : '#ede9fe',
+                      bgcolor: activeFilter === 'self' ? 'var(--app-primary)' : 'color-mix(in srgb, var(--app-primary) 12%, white)',
                       color: activeFilter === 'self' ? '#ffffff' : '#6d28d9',
                       border: '1px solid',
-                      borderColor: activeFilter === 'self' ? '#7c3aed' : '#ddd6fe',
+                      borderColor: 'var(--app-primary)',
                       ...(activeFilter === 'self'
                         ? {
-                            boxShadow: '0 0 0 2px #ffffff, 0 0 0 4px #7c3aed, 0 4px 12px rgba(124, 58, 237, 0.35)',
+                            boxShadow: '0 0 0 2px #ffffff, 0 0 0 4px var(--app-primary), 0 4px 12px color-mix(in srgb, var(--app-primary) 35%, transparent)',
                             transform: 'scale(1.04)',
                           }
                         : {
@@ -934,7 +952,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                     sx={{
                       color:
                         activeFilter === 'self'
-                          ? '#7c3aed'
+                          ? 'var(--app-primary)'
                           : activeFilter === 'needs_review'
                           ? '#b45309'
                           : activeFilter === 'possible_dup'
@@ -1080,7 +1098,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                             : isRowSelf
                             ? '#faf5ff'
                             : t.selected
-                            ? 'rgba(79, 70, 229, 0.02)'
+                            ? 'color-mix(in srgb, var(--app-primary) 2%, transparent)'
                             : 'inherit',
                         }}
                       >
@@ -1145,7 +1163,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                             <FormControl size="small" fullWidth>
                               <Select
-                                value={t.category || 'Needs review'}
+                                value={categories.some((category) => category.name === t.category) ? t.category : ''}
                                 onChange={(e) => handleCategoryChange(t.tempId, e.target.value)}
                                 sx={{
                                   fontSize: '0.82rem',
@@ -1154,16 +1172,14 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                                   bgcolor: '#ffffff',
                                 }}
                               >
+                                <MenuItem value="" disabled sx={{ fontSize: '0.82rem' }}>
+                                  {categories.length ? 'Select a category' : 'Loading categories…'}
+                                </MenuItem>
                                 {categories.map((c) => (
                                   <MenuItem key={c.id} value={c.name} sx={{ fontSize: '0.82rem' }}>
                                     {c.name}
                                   </MenuItem>
                                 ))}
-                                {!categories.some((c) => c.name === t.category) && (
-                                  <MenuItem value={t.category} sx={{ fontSize: '0.82rem' }}>
-                                    {t.category}
-                                  </MenuItem>
-                                )}
                               </Select>
                             </FormControl>
                             <Tooltip title="Save as reusable categorization rule">
@@ -1189,7 +1205,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                             {availableGroups.length > 0 ? (
                               <FormControl size="small" fullWidth>
                                 <Select
-                                  value={t.group || availableGroups[0]?.name || ''}
+                                  value={availableGroups.find((group) => group.name === t.group)?.name || availableGroups[0]?.name || ''}
                                   onChange={(e) => handleGroupChange(t.tempId, e.target.value)}
                                   sx={{
                                     fontSize: '0.82rem',
@@ -1203,16 +1219,11 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                                       {g.name}
                                     </MenuItem>
                                   ))}
-                                  {t.group && !availableGroups.some((g) => g.name === t.group) && (
-                                    <MenuItem value={t.group} sx={{ fontSize: '0.82rem' }}>
-                                      {t.group}
-                                    </MenuItem>
-                                  )}
                                 </Select>
                               </FormControl>
                             ) : (
                               <Chip
-                                label={t.group || 'General'}
+                                label="No groups in Category & Group Master"
                                 size="small"
                                 variant="outlined"
                                 sx={{
@@ -1333,7 +1344,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
                                 Ready to Import
                               </MenuItem>
                               <MenuItem value="self" sx={{ fontSize: '0.78rem', fontWeight: 600, color: '#6d28d9' }}>
-                                <SyncAltRoundedIcon sx={{ mr: 0.8, color: '#7c3aed', fontSize: 16 }} />
+                                <SyncAltRoundedIcon sx={{ mr: 0.8, color: 'primary.main', fontSize: 16 }} />
                                 Self
                               </MenuItem>
                               <MenuItem value="needs_review" sx={{ fontSize: '0.78rem', fontWeight: 600, color: '#b45309' }}>

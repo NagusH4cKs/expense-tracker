@@ -87,6 +87,33 @@ model Budget {
   @@unique([year, month, category])
 }
 
+model Debt {
+  id          String        @id @default(uuid())
+  person      String
+  description String?
+  amount      Float
+  lentDate    String
+  repayments  DebtRepayment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([lentDate])
+  @@index([person])
+}
+
+model DebtRepayment {
+  id        String   @id @default(uuid())
+  debtId    String
+  debt      Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  amount    Float
+  date      String
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([debtId])
+  @@index([date])
+}
+
 model User {
   id        String   @id @default(uuid())
   username  String   @unique

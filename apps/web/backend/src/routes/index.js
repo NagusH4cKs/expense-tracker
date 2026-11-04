@@ -6,6 +6,7 @@ import transactionRoutes from './transaction.routes.js';
 import budgetRoutes from './budget.routes.js';
 import ruleRoutes from './rule.routes.js';
 import authRoutes from './auth.routes.js';
+import debtRoutes from './debt.routes.js';
 import { ensureDefaultUser } from '../controllers/auth.controller.js';
 import { ensureInitialData } from '../utils/seedData.js';
 
@@ -22,6 +23,7 @@ router.use('/rules', ruleRoutes);
 router.use('/import', importRoutes);
 router.use('/transactions', transactionRoutes);
 router.use('/budget', budgetRoutes);
+router.use('/debts', debtRoutes);
 
 router.get('/health', (_req, res) => {
   res.json({

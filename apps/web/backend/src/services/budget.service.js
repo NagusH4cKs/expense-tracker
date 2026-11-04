@@ -21,6 +21,9 @@ export const setBudget = async ({ year, month, category = 'ALL', amount }) => {
     if (!masterCategory) {
       throw new Error(`Select a valid category from category master. "${key.category}" not found.`);
     }
+    if (masterCategory.type !== 'expense') {
+      throw new Error('Monthly budgets can only be set for expense categories');
+    }
   }
 
   return prisma.budget.upsert({
@@ -67,7 +70,13 @@ export const getBudgetsForMonth = async (year, month) => {
 
   const allBudgetRecord = records.find((b) => b.category === 'ALL');
   const allBudget = allBudgetRecord ? allBudgetRecord.amount : 0;
-  const categoryBudgets = records.filter((b) => b.category !== 'ALL');
+  const categoryRecords = records.filter((b) => b.category !== 'ALL');
+  const masterCategories = await prisma.category.findMany({
+    where: { name: { in: categoryRecords.map((b) => b.category) } },
+    select: { name: true, type: true },
+  });
+  const expenseCategoryNames = new Set(masterCategories.filter((category) => category.type === 'expense').map((category) => category.name));
+  const categoryBudgets = categoryRecords.filter((b) => expenseCategoryNames.has(b.category));
   const totalCategoryBudget = categoryBudgets.reduce((sum, b) => sum + b.amount, 0);
 
   return {
@@ -76,7 +85,7 @@ export const getBudgetsForMonth = async (year, month) => {
     allBudget,
     totalCategoryBudget,
     effectiveBudget: totalCategoryBudget > 0 ? totalCategoryBudget : allBudget,
-    records,
+    records: [allBudgetRecord, ...categoryBudgets].filter(Boolean),
   };
 };
 

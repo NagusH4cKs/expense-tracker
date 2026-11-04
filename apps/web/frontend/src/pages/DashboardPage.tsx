@@ -22,7 +22,9 @@ import {
   CircularProgress,
   Collapse,
   Divider,
+  Tooltip as MuiTooltip,
 } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import ArrowDownwardRoundedIcon from '@mui/icons-material/ArrowDownwardRounded';
 import ArrowUpwardRoundedIcon from '@mui/icons-material/ArrowUpwardRounded';
 import SavingsRoundedIcon from '@mui/icons-material/SavingsRounded';
@@ -41,6 +43,7 @@ import KeyboardArrowRightRoundedIcon from '@mui/icons-material/KeyboardArrowRigh
 import UnfoldMoreRoundedIcon from '@mui/icons-material/UnfoldMoreRounded';
 import UnfoldLessRoundedIcon from '@mui/icons-material/UnfoldLessRounded';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
+import ViewAgendaRoundedIcon from '@mui/icons-material/ViewAgendaRounded';
 
 import {
   ResponsiveContainer,
@@ -66,9 +69,10 @@ import {
 import { budgetService } from '../services/budget.service';
 import { categoryService } from '../services/category.service';
 import { CategoryItem } from '../types/category';
+import { ACTIVE_PRIMARY } from '../palette';
 
 const PIE_COLORS = [
-  '#4f46e5', // Indigo
+  ACTIVE_PRIMARY, // Active primary
   '#06b6d4', // Cyan
   '#10b981', // Emerald
   '#f59e0b', // Amber
@@ -79,6 +83,50 @@ const PIE_COLORS = [
   '#14b8a6', // Teal
   '#ef4444', // Red
 ];
+
+interface OverviewPieItem { name: string; value: number }
+
+const OverviewPieView: React.FC<{
+  title: string;
+  caption: string;
+  data: OverviewPieItem[];
+  total: number;
+  emptyMessage: string;
+}> = ({ title, caption, data, total, emptyMessage }) => (
+  <CardContent sx={{ p: 2.5 }}>
+    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>{title}</Typography>
+    <Typography variant="caption" color="text.secondary">{caption}</Typography>
+    {data.length === 0 ? (
+      <Box sx={{ height: 260, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+        <Typography variant="body2" color="text.secondary">{emptyMessage}</Typography>
+      </Box>
+    ) : <>
+      <Box sx={{ height: 225, position: 'relative', mt: 1 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={2}>
+              {data.map((_item, index) => <Cell key={`overview-pie-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />)}
+            </Pie>
+            <Tooltip formatter={(value: any, _name: any, context: any) => [formatCurrency(Number(value) || 0), context.payload.name]} />
+          </PieChart>
+        </ResponsiveContainer>
+        <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', pointerEvents: 'none' }}>
+          <Typography variant="caption" color="text.secondary">{title}</Typography>
+          <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{formatCurrency(total)}</Typography>
+        </Box>
+      </Box>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.7, maxHeight: 115, overflowY: 'auto' }}>
+        {data.map((item, index) => <Box key={item.name} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, minWidth: 0 }}>
+            <Box sx={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, bgcolor: PIE_COLORS[index % PIE_COLORS.length] }} />
+            <Typography variant="caption" noWrap>{item.name}</Typography>
+          </Box>
+          <Typography variant="caption" sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatCurrency(item.value)}</Typography>
+        </Box>)}
+      </Box>
+    </>}
+  </CardContent>
+);
 
 const MONTH_NAMES = [
   { value: '01', label: 'January' },
@@ -133,6 +181,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
   const [commonYear, setCommonYear] = useState<string>(CURRENT_YEAR);
   const [commonMonth, setCommonMonth] = useState<string>(CURRENT_MONTH);
   const [commonDate, setCommonDate] = useState<string>('all');
+  const [budgetViewMode, setBudgetViewMode] = useState<'card' | 'chart'>('card');
 
   // Master available dates and years for dropdown options
   const [availableYears, setAvailableYears] = useState<string[]>([CURRENT_YEAR]);
@@ -261,7 +310,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
       // Populate category budget inputs
       if (data.categoryFinancials) {
         const inputMap: Record<string, string> = {};
-        data.categoryFinancials.forEach((c) => {
+        data.categoryFinancials.filter((c) => c.type === 'expense').forEach((c) => {
           inputMap[c.category] = c.budgetAmount > 0 ? String(c.budgetAmount) : '';
         });
         setCategoryBudgetInputs(inputMap);
@@ -418,6 +467,45 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
     ? Math.min(100, Math.round((overallTotalExpenses / overallMonthlyBudget) * 100))
     : 0;
 
+  const budgetPieData = useMemo(() => {
+    const categories = (overviewData?.categoryFinancials || []).filter((category) => category.type === 'expense');
+    const hasCategoryTargets = categories.some((category) => {
+      const entered = Number.parseFloat(categoryBudgetInputs[category.category] || '');
+      return entered > 0 || category.budgetAmount > 0;
+    });
+    return categories.map((category) => {
+      const entered = Number.parseFloat(categoryBudgetInputs[category.category] || '');
+      return {
+        name: category.category,
+        value: hasCategoryTargets ? (entered > 0 ? entered : category.budgetAmount) : category.expenseAmount,
+        spent: category.expenseAmount,
+      };
+    }).filter((category) => category.value > 0);
+  }, [overviewData, categoryBudgetInputs]);
+  const budgetPieTotal = budgetPieData.reduce((sum, category) => sum + category.value, 0);
+  const budgetPieShowsTargets = budgetPieData.some((category) => category.name && (
+    (Number.parseFloat(categoryBudgetInputs[category.name] || '') > 0) ||
+    ((overviewData?.categoryFinancials || []).find((item) => item.category === category.name)?.budgetAmount || 0) > 0
+  ));
+  const incomePieData = (overviewData?.categoryFinancials || [])
+    .filter((category) => category.incomeAmount > 0)
+    .map((category) => ({ name: category.category, value: category.incomeAmount }));
+  const expensePieData = (overviewData?.categoryFinancials || [])
+    .filter((category) => category.expenseAmount > 0)
+    .map((category) => ({ name: category.category, value: category.expenseAmount }));
+  const remainingByCategory = (overviewData?.categoryFinancials || [])
+    .filter((category) => category.type === 'expense' && category.budgetAmount > 0)
+    .map((category) => ({ name: category.category, value: Math.max(0, category.budgetAmount - category.expenseAmount) }))
+    .filter((category) => category.value > 0);
+  const remainingPieData = hasCategoryBudgets
+    ? remainingByCategory
+    : overallMonthlyBudget > 0
+      ? [
+          { name: 'Remaining', value: overallRemainingBudget },
+          { name: 'Spent', value: Math.min(overallTotalExpenses, overallMonthlyBudget) },
+        ].filter((category) => category.value > 0)
+      : [];
+
   const budgetStatus = overallMonthlyBudget === 0
     ? 'Not Set'
     : overallOverBudget > 0
@@ -452,7 +540,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
               width: 44,
               height: 44,
               borderRadius: 2.5,
-              bgcolor: 'rgba(79, 70, 229, 0.08)',
+              bgcolor: alpha(ACTIVE_PRIMARY, 0.08),
               color: 'primary.main',
               display: 'flex',
               alignItems: 'center',
@@ -544,15 +632,35 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
         <Typography variant="subtitle2" sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: 0.5, fontSize: '0.75rem' }}>
           Monthly Overview & Budget Breakdown
         </Typography>
-        <Button
-          size="small"
-          variant="outlined"
-          onClick={toggleAllCards}
-          startIcon={isAllExpanded ? <UnfoldLessRoundedIcon fontSize="small" /> : <UnfoldMoreRoundedIcon fontSize="small" />}
-          sx={{ borderRadius: 2, fontSize: '0.75rem', fontWeight: 600, textTransform: 'none', py: 0.4 }}
-        >
-          {isAllExpanded ? 'Collapse All Categories' : 'Expand All Categories'}
-        </Button>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
+          <MuiTooltip title="Card view">
+            <IconButton
+              size="small"
+              aria-label="Show monthly overview cards"
+              aria-pressed={budgetViewMode === 'card'}
+              onClick={() => setBudgetViewMode('card')}
+              sx={{ color: budgetViewMode === 'card' ? 'primary.main' : 'text.secondary', bgcolor: budgetViewMode === 'card' ? alpha(ACTIVE_PRIMARY, 0.1) : 'transparent' }}
+            ><ViewAgendaRoundedIcon fontSize="small" /></IconButton>
+          </MuiTooltip>
+          <MuiTooltip title="Budget chart view">
+            <IconButton
+              size="small"
+              aria-label="Show monthly budget chart"
+              aria-pressed={budgetViewMode === 'chart'}
+              onClick={() => setBudgetViewMode('chart')}
+              sx={{ color: budgetViewMode === 'chart' ? 'primary.main' : 'text.secondary', bgcolor: budgetViewMode === 'chart' ? alpha(ACTIVE_PRIMARY, 0.1) : 'transparent' }}
+            ><PieChartRoundedIcon fontSize="small" /></IconButton>
+          </MuiTooltip>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={toggleAllCards}
+            startIcon={isAllExpanded ? <UnfoldLessRoundedIcon fontSize="small" /> : <UnfoldMoreRoundedIcon fontSize="small" />}
+            sx={{ borderRadius: 2, fontSize: '0.75rem', fontWeight: 600, textTransform: 'none', py: 0.4 }}
+          >
+            {isAllExpanded ? 'Collapse All Categories' : 'Expand All Categories'}
+          </Button>
+        </Box>
       </Box>
 
       <Box
@@ -565,14 +673,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
       >
         {/* CARD 1: Monthly Budget with Subcategory Setting & Tallying */}
         <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 3.5, bgcolor: '#ffffff', transition: 'all 0.2s' }}>
-          <CardContent sx={{ p: 2.5 }}>
+          {budgetViewMode === 'card' ? <CardContent sx={{ p: 2.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
               <Box
                 sx={{
                   width: 44,
                   height: 44,
                   borderRadius: 2.5,
-                  bgcolor: 'rgba(79, 70, 229, 0.1)',
+                  bgcolor: alpha(ACTIVE_PRIMARY, 0.1),
                   color: 'primary.main',
                   display: 'flex',
                   alignItems: 'center',
@@ -599,7 +707,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
                 sx={{
                   p: 0.4,
                   color: expandedCards.budget ? 'primary.main' : 'text.secondary',
-                  bgcolor: expandedCards.budget ? 'rgba(79, 70, 229, 0.08)' : 'transparent',
+                  bgcolor: expandedCards.budget ? alpha(ACTIVE_PRIMARY, 0.08) : 'transparent',
                   borderRadius: 1.5,
                 }}
               >
@@ -640,7 +748,9 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
                 Category Target Budgets (Live Tally)
               </Typography>
               <Box sx={{ maxHeight: 340, overflowY: 'auto', pr: 0.5, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-                {(overviewData?.categoryFinancials || dbCategories).map((item: any) => {
+                {(overviewData?.categoryFinancials || dbCategories)
+                  .filter((item: any) => item.type === 'expense')
+                  .map((item: any) => {
                   const catName = item.category || item.name;
                   const inputValue = categoryBudgetInputs[catName] !== undefined ? categoryBudgetInputs[catName] : '';
                   const isSavingThis = savingCategoryBudget === catName;
@@ -706,12 +816,55 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
                 })}
               </Box>
             </Collapse>
-          </CardContent>
+          </CardContent> : <CardContent sx={{ p: 2.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600 }}>Budget Breakdown</Typography>
+              <IconButton size="small" onClick={handleOpenBudgetModal} disabled={commonYear === 'all' || commonMonth === 'all'} aria-label="Edit monthly budget">
+                <EditRoundedIcon fontSize="small" />
+              </IconButton>
+            </Box>
+            <Typography variant="h6" sx={{ fontWeight: 800 }}>{formatCurrency(overallMonthlyBudget)}</Typography>
+            <Typography variant="caption" color="text.secondary">
+              {budgetPieShowsTargets ? 'Category budget allocation' : 'Spending by expense category'}
+            </Typography>
+            {budgetPieData.length === 0 ? (
+              <Box sx={{ height: 220, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+                <Typography variant="body2" color="text.secondary">Set expense category budgets or add expenses to see the chart.</Typography>
+              </Box>
+            ) : <>
+              <Box sx={{ height: 225, position: 'relative', mt: 1 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={budgetPieData} dataKey="value" nameKey="name" innerRadius={52} outerRadius={82} paddingAngle={2}>
+                      {budgetPieData.map((_item, index) => <Cell key={`budget-pie-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />)}
+                    </Pie>
+                    <Tooltip formatter={(value: any, _name: any, context: any) => [
+                      `${formatCurrency(Number(value) || 0)}${budgetPieShowsTargets ? ` target · ${formatCurrency(context.payload.spent)} spent` : ''}`,
+                      context.payload.name,
+                    ]} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <Box sx={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', pointerEvents: 'none' }}>
+                  <Typography variant="caption" color="text.secondary">{budgetPieShowsTargets ? 'Budgeted' : 'Spent'}</Typography>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 800 }}>{formatCurrency(budgetPieTotal)}</Typography>
+                </Box>
+              </Box>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.7, maxHeight: 115, overflowY: 'auto' }}>
+                {budgetPieData.map((item, index) => <Box key={item.name} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, minWidth: 0 }}>
+                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, bgcolor: PIE_COLORS[index % PIE_COLORS.length] }} />
+                    <Typography variant="caption" noWrap>{item.name}</Typography>
+                  </Box>
+                  <Typography variant="caption" sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>{formatCurrency(item.value)}</Typography>
+                </Box>)}
+              </Box>
+            </>}
+          </CardContent>}
         </Card>
 
         {/* CARD 2: Total Income with Subcategory Breakdown */}
         <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 3.5, bgcolor: '#ffffff', transition: 'all 0.2s' }}>
-          <CardContent sx={{ p: 2.5 }}>
+          {budgetViewMode === 'card' ? <CardContent sx={{ p: 2.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
               <Box
                 sx={{
@@ -805,12 +958,18 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
                 )}
               </Box>
             </Collapse>
-          </CardContent>
+          </CardContent> : <OverviewPieView
+            title="Total Income"
+            caption="Income by category"
+            data={incomePieData}
+            total={overallTotalIncome}
+            emptyMessage="No income transactions in this period."
+          />}
         </Card>
 
         {/* CARD 3: Total Expenses with Subcategory Breakdown */}
         <Card elevation={0} sx={{ border: '1px solid #e2e8f0', borderRadius: 3.5, bgcolor: '#ffffff', transition: 'all 0.2s' }}>
-          <CardContent sx={{ p: 2.5 }}>
+          {budgetViewMode === 'card' ? <CardContent sx={{ p: 2.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
               <Box
                 sx={{
@@ -900,7 +1059,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
                   ))}
               </Box>
             </Collapse>
-          </CardContent>
+          </CardContent> : <OverviewPieView
+            title="Total Expenses"
+            caption="Expense by category"
+            data={expensePieData}
+            total={overallTotalExpenses}
+            emptyMessage="No expense transactions in this period."
+          />}
         </Card>
 
         {/* CARD 4: Remaining Budget with Subcategory Breakdown */}
@@ -913,7 +1078,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
             transition: 'all 0.2s',
           }}
         >
-          <CardContent sx={{ p: 2.5 }}>
+          {budgetViewMode === 'card' ? <CardContent sx={{ p: 2.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1.5 }}>
               <Box
                 sx={{
@@ -992,7 +1157,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
               </Typography>
               <Box sx={{ maxHeight: 340, overflowY: 'auto', pr: 0.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
                 {(overviewData?.categoryFinancials || [])
-                  .filter((c) => c.type === 'expense' || c.budgetAmount > 0 || c.expenseAmount > 0)
+                  .filter((c) => c.type === 'expense')
                   .map((item) => {
                     const assignedBudget = parseFloat(categoryBudgetInputs[item.category]) || item.budgetAmount || 0;
                     const diff = assignedBudget - item.expenseAmount;
@@ -1042,7 +1207,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
                   })}
               </Box>
             </Collapse>
-          </CardContent>
+          </CardContent> : <OverviewPieView
+            title="Remaining Budget"
+            caption={hasCategoryBudgets ? 'Available amount in budgeted categories' : 'Spent versus remaining from the monthly target'}
+            data={remainingPieData}
+            total={hasCategoryBudgets ? remainingPieData.reduce((sum, category) => sum + category.value, 0) : overallRemainingBudget}
+            emptyMessage={overallMonthlyBudget > 0 ? 'No budget remains in this period.' : 'Set a monthly budget to see what remains.'}
+          />}
         </Card>
       </Box>
 
@@ -1079,7 +1250,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({ onNavigateToImport
                   width: 42,
                   height: 42,
                   borderRadius: 2.5,
-                  bgcolor: 'rgba(79, 70, 229, 0.08)',
+                  bgcolor: alpha(ACTIVE_PRIMARY, 0.08),
                   color: 'primary.main',
                   display: 'flex',
                   alignItems: 'center',

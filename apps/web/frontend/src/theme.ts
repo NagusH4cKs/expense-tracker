@@ -1,12 +1,12 @@
 import { createTheme } from '@mui/material/styles';
+import { alpha } from '@mui/material/styles';
+import { ACTIVE_PRIMARY } from './palette';
 
 export const theme = createTheme({
   palette: {
     mode: 'light',
     primary: {
-      main: '#4f46e5',
-      light: '#6366f1',
-      dark: '#4338ca',
+      main: ACTIVE_PRIMARY,
       contrastText: '#ffffff',
     },
     secondary: {
@@ -70,7 +70,7 @@ export const theme = createTheme({
           boxShadow: 'none',
           padding: '8px 16px',
           '&:hover': {
-            boxShadow: '0 4px 12px rgba(79, 70, 229, 0.15)',
+            boxShadow: `0 4px 12px ${alpha(ACTIVE_PRIMARY, 0.15)}`,
           },
         },
       },

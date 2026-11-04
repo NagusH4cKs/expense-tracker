@@ -31,6 +31,8 @@ import {
   FormControlLabel,
   Switch,
   Checkbox,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
@@ -108,6 +110,7 @@ export const TransactionsPage: React.FC = () => {
   const [endDate, setEndDate] = useState<string>('');
   const [reviewFilter, setReviewFilter] = useState<'all' | 'needsReview'>('all');
   const [transferFilter, setTransferFilter] = useState<'all' | 'transfers'>('all');
+  const [transactionTab, setTransactionTab] = useState<'income' | 'expense' | 'debts'>('expense');
   const [dbCategories, setDbCategories] = useState<CategoryItem[]>([]);
 
   // Edit Category Modal State
@@ -167,6 +170,7 @@ export const TransactionsPage: React.FC = () => {
         page: page + 1, // backend is 1-indexed
         limit: rowsPerPage,
         category: selectedCategory === 'All' ? undefined : selectedCategory,
+        type: transactionTab === 'income' ? 'income' : 'expense',
         search: debouncedSearch.trim() || undefined,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
@@ -203,7 +207,7 @@ export const TransactionsPage: React.FC = () => {
 
   useEffect(() => {
     loadTransactions();
-  }, [page, rowsPerPage, selectedCategory, debouncedSearch, startDate, endDate, reviewFilter, transferFilter]);
+  }, [page, rowsPerPage, selectedCategory, debouncedSearch, startDate, endDate, reviewFilter, transferFilter, transactionTab]);
 
   // Auto-reload if an add-transaction event was fired
   useEffect(() => {
@@ -344,6 +348,11 @@ export const TransactionsPage: React.FC = () => {
         border: '1px solid #e2e8f0',
       }}
     >
+      <Tabs value={transactionTab} onChange={(_event, value) => { if (value === 'debts') navigate('/debts'); else { setTransactionTab(value); setPage(0); } }} sx={{ mb: 2, borderBottom: '1px solid #e2e8f0' }} aria-label="Transaction type">
+        <Tab value="income" label="Income" />
+        <Tab value="expense" label="Expenses" />
+        <Tab value="debts" label="Debts" />
+      </Tabs>
       {/* Filter Section: Search, Category, Date Filters */}
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mb: 3 }}>
         {/* Row 1: Search, Category dropdown, and Import button */}
@@ -456,7 +465,7 @@ export const TransactionsPage: React.FC = () => {
               whiteSpace: 'nowrap',
               '&:hover': {
                 borderColor: 'primary.main',
-                bgcolor: 'rgba(79, 70, 229, 0.04)',
+                bgcolor: 'color-mix(in srgb, var(--app-primary) 4%, transparent)',
               },
             }}
           >
@@ -1141,7 +1150,7 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                         borderRadius: 2,
                         transition: 'background-color 0.2s',
                         '&:hover': {
-                          bgcolor: 'rgba(79, 70, 229, 0.08)',
+                          bgcolor: 'color-mix(in srgb, var(--app-primary) 8%, transparent)',
                           '& .category-chip': {
                             borderColor: 'primary.main',
                             color: 'primary.main',
@@ -1213,7 +1222,7 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                         onClick={() => onEdit(t)}
                         sx={{
                           color: '#64748b',
-                          '&:hover': { color: 'primary.main', bgcolor: 'rgba(79, 70, 229, 0.08)' },
+                          '&:hover': { color: 'primary.main', bgcolor: 'color-mix(in srgb, var(--app-primary) 8%, transparent)' },
                         }}
                       >
                         <EditRoundedIcon fontSize="small" />

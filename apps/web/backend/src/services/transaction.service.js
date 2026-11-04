@@ -376,7 +376,10 @@ export const getTransactionAnalytics = async (filters = {}) => {
     const catTxs = txs.filter((t) => t.category.toLowerCase() === cat.name.toLowerCase());
     const catIncome = catTxs.filter((t) => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
     const catExpense = catTxs.filter((t) => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-    const catBudget = budgetRecordsMap.get(cat.name) || 0;
+    // Monthly budgets are for spending categories only. Income and transfer
+    // categories remain visible in their transaction breakdowns, but never
+    // contribute to budget totals or remaining amounts.
+    const catBudget = cat.type === 'expense' ? (budgetRecordsMap.get(cat.name) || 0) : 0;
     const catRemaining = Math.max(0, catBudget - catExpense);
     const catOverBudget = catExpense > catBudget && catBudget > 0 ? catExpense - catBudget : 0;
     const catPercentage = catBudget > 0 ? Math.min(100, Math.round((catExpense / catBudget) * 100)) : 0;
@@ -399,7 +402,9 @@ export const getTransactionAnalytics = async (filters = {}) => {
   // Sum of all category budgets = totalCategoryBudget
   // If user provided values for categories, overall monthly budget is totalCategoryBudget
   // If they didn't give any category values, monthlyAllBudget is taken
-  const totalCategoryBudget = categoryFinancials.reduce((sum, c) => sum + c.budgetAmount, 0);
+  const totalCategoryBudget = categoryFinancials
+    .filter((c) => c.type === 'expense')
+    .reduce((sum, c) => sum + c.budgetAmount, 0);
   const effectiveOverallBudget = totalCategoryBudget > 0 ? totalCategoryBudget : monthlyAllBudget;
   const isTalliedFromCategories = totalCategoryBudget > 0;
 
