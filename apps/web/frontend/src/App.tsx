@@ -9,6 +9,7 @@ import { CategoriesPage } from './pages/CategoriesPage';
 import { ImportPage } from './pages/ImportPage';
 import { LoginPage } from './pages/LoginPage';
 import { DebtsPage } from './pages/DebtsPage';
+import { CalendarPage } from './pages/CalendarPage';
 import { AuthProvider } from './context/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import './styles.css';
@@ -36,6 +37,7 @@ export const App: React.FC = () => {
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="transactions" element={<TransactionsPage />} />
               <Route path="debts" element={<DebtsPage />} />
+              <Route path="calendar" element={<CalendarPage />} />
               <Route path="categories" element={<CategoriesPage />} />
               <Route path="import" element={<ImportPage />} />
             </Route>

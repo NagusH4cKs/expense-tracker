@@ -89,6 +89,7 @@ export const getAllTransactions = async (filters = {}) => {
 export const createTransaction = async (data) => {
   const {
     date,
+    time,
     description,
     remarks,
     category,
@@ -124,6 +125,7 @@ export const createTransaction = async (data) => {
   return prisma.transaction.create({
     data: {
       date: date.trim(),
+      time: time && String(time).trim() ? String(time).trim() : null,
       description: description.trim(),
       remarks: remarks && remarks.trim() ? remarks.trim() : null,
       category: category.trim(),
@@ -189,6 +191,14 @@ export const updateTransaction = async (id, data) => {
   }
   if (data.date !== undefined) {
     updateData.date = String(data.date).trim();
+  }
+  if (data.time !== undefined) {
+    updateData.time = data.time && String(data.time).trim() ? String(data.time).trim() : null;
+  }
+  if (data.reference !== undefined) {
+    updateData.reference = data.reference && String(data.reference).trim()
+      ? String(data.reference).trim()
+      : null;
   }
   if (data.balance !== undefined) {
     updateData.balance = data.balance !== null && !isNaN(parseFloat(data.balance)) ? parseFloat(data.balance) : null;

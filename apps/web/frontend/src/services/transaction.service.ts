@@ -4,6 +4,7 @@ import { ApiResponse } from '../types/category';
 export interface TransactionItem {
   id: string;
   date: string;
+  time?: string | null;
   description: string;
   category: string;
   group?: string | null;
@@ -126,6 +127,7 @@ export interface GetAnalyticsQuery {
 
 export interface CreateTransactionDto {
   date: string;
+  time?: string;
   description: string;
   amount: number;
   type: 'expense' | 'income';

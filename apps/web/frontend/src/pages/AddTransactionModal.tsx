@@ -24,7 +24,7 @@ import ArrowUpwardRoundedIcon from '@mui/icons-material/ArrowUpwardRounded';
 import ArrowDownwardRoundedIcon from '@mui/icons-material/ArrowDownwardRounded';
 import AccountBalanceWalletRoundedIcon from '@mui/icons-material/AccountBalanceWalletRounded';
 import { CategoryItem } from '../types/category';
-import { transactionService } from '../services/transaction.service';
+import { transactionService, TransactionItem } from '../services/transaction.service';
 
 const COMMON_ACCOUNTS = [
   'ICICI Bank',
@@ -41,6 +41,7 @@ interface AddTransactionModalProps {
   dbCategories: CategoryItem[];
   onClose: () => void;
   onSuccess: () => void;
+  initialTransaction?: TransactionItem | null;
 }
 
 export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
@@ -48,6 +49,7 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
   dbCategories,
   onClose,
   onSuccess,
+  initialTransaction = null,
 }) => {
   // Today's date formatted as YYYY-MM-DD in local time
   const todayStr = useMemo(() => {
@@ -62,6 +64,7 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
   const [type, setType] = useState<'expense' | 'income'>('expense');
   const [amount, setAmount] = useState<string>('');
   const [date, setDate] = useState<string>(todayStr);
+  const [time, setTime] = useState<string>('');
   const [description, setDescription] = useState<string>('');
   const [category, setCategory] = useState<string>('');
   const [group, setGroup] = useState<string>('');
@@ -80,16 +83,41 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
     return matching.length > 0 ? matching : dbCategories;
   }, [dbCategories, type]);
 
-  // Set default category when categories change or modal opens
+  // Load the selected transaction for editing, or reset the form for a new entry.
   useEffect(() => {
-    if (open) {
+    if (!open) return;
+    setErrorMsg(null);
+    if (initialTransaction) {
+      setType(initialTransaction.type);
+      setAmount(String(initialTransaction.amount));
+      setDate(initialTransaction.date.split('T')[0]);
+      setTime(initialTransaction.time || '');
+      setDescription(initialTransaction.description);
+      setCategory(initialTransaction.category);
+      setGroup(initialTransaction.group || '');
+      setAccount(COMMON_ACCOUNTS.includes(initialTransaction.account) ? initialTransaction.account : 'custom');
+      setCustomAccount(COMMON_ACCOUNTS.includes(initialTransaction.account) ? '' : initialTransaction.account);
+      setRemarks(initialTransaction.remarks || '');
+      setReference(initialTransaction.reference || '');
+    } else {
+      setType('expense');
+      setAmount('');
       setDate(todayStr);
-      setErrorMsg(null);
-      if (filteredCategories.length > 0 && (!category || !filteredCategories.some((c) => c.name === category))) {
-        setCategory(filteredCategories[0].name);
-      }
+      setTime('');
+      setDescription('');
+      setCategory('');
+      setGroup('');
+      setAccount('ICICI Bank');
+      setCustomAccount('');
+      setRemarks('');
+      setReference('');
     }
-  }, [open, filteredCategories, todayStr]);
+  }, [open, initialTransaction?.id, todayStr]);
+
+  useEffect(() => {
+    if (!open || initialTransaction || filteredCategories.length === 0) return;
+    if (!filteredCategories.some((c) => c.name === category)) setCategory(filteredCategories[0].name);
+  }, [open, initialTransaction, filteredCategories, category]);
 
   // Available groups for the selected category
   const availableGroups = useMemo(() => {
@@ -99,19 +127,22 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
 
   // Set default group when category changes
   useEffect(() => {
-    if (availableGroups.length > 0) {
-      setGroup(availableGroups[0].name);
-    } else {
-      setGroup('');
-    }
-  }, [category, availableGroups]);
+    if (availableGroups.some((item) => item.name === group)) return;
+    if (initialTransaction && category === initialTransaction.category && !group) return;
+    setGroup(availableGroups[0]?.name || '');
+  }, [category, availableGroups, group, initialTransaction]);
 
   const resetForm = () => {
     setAmount('');
     setDescription('');
     setDate(todayStr);
+    setTime('');
     setRemarks('');
     setReference('');
+    setCategory('');
+    setGroup('');
+    setDescription('');
+    setAmount('');
     setErrorMsg(null);
   };
 
@@ -148,8 +179,9 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
 
     try {
       setLoading(true);
-      await transactionService.create({
+      const payload = {
         date,
+        time: time || undefined,
         description: description.trim(),
         amount: parsedAmount,
         type,
@@ -158,12 +190,14 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
         account: finalAccount,
         remarks: remarks.trim() || undefined,
         reference: reference.trim() || undefined,
-      });
+      };
+      if (initialTransaction) await transactionService.update(initialTransaction.id, payload);
+      else await transactionService.create(payload);
 
       resetForm();
       onSuccess();
     } catch (err: any) {
-      console.error('Failed to create transaction', err);
+      console.error('Failed to save transaction', err);
       setErrorMsg(err.response?.data?.message || err.message || 'Failed to save transaction');
     } finally {
       setLoading(false);
@@ -213,10 +247,10 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
             </Box>
             <Box>
               <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                Add New Transaction
+                {initialTransaction ? 'Edit Transaction' : 'Add New Transaction'}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                Manual entry with instant budget & ledger sync
+                {initialTransaction ? 'Update the date and details for this transaction' : 'Manual entry with instant budget & ledger sync'}
               </Typography>
             </Box>
           </Box>
@@ -273,8 +307,8 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
             </ToggleButtonGroup>
           </Box>
 
-          {/* 2. Amount and Date in Two Columns */}
-          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
+          {/* 2. Amount, date, and time */}
+          <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
             <TextField
               label="Amount (INR)"
               type="number"
@@ -302,6 +336,14 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
               slotProps={{
                 inputLabel: { shrink: true },
               }}
+            />
+            <TextField
+              label="Time (optional)"
+              type="time"
+              fullWidth
+              value={time}
+              onChange={(e) => setTime(e.target.value)}
+              slotProps={{ inputLabel: { shrink: true } }}
             />
           </Box>
 
@@ -419,7 +461,7 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
             startIcon={loading ? <CircularProgress size={18} color="inherit" /> : null}
             sx={{ px: 3.5, fontWeight: 700, borderRadius: 2 }}
           >
-            {loading ? 'Saving...' : 'Save Transaction'}
+            {loading ? 'Saving...' : initialTransaction ? 'Save Changes' : 'Save Transaction'}
           </Button>
         </DialogActions>
       </form>

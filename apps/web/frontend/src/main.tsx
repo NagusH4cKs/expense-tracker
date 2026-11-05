@@ -7,7 +7,7 @@ document.documentElement.style.setProperty('--app-primary', ACTIVE_PRIMARY);
 document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')?.setAttribute('content', ACTIVE_PRIMARY);
 const appFavicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
 if (appFavicon) {
-  const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="${ACTIVE_PRIMARY}"/><path d="M17 21h30v5H17zm0 9h19v5H17zm0 9h13v5H17z" fill="#fff"/><circle cx="44" cy="42" r="10" fill="#fff"/><path d="M44 36v12m-4-8h5a2 2 0 0 1 0 4h-5" fill="none" stroke="${ACTIVE_PRIMARY}" stroke-width="2.4" stroke-linecap="round"/></svg>`;
+  const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="${ACTIVE_PRIMARY}"/><path d="M10 16V8c0-1.1.89-2 2-2h9V5c0-1.1-.9-2-2-2H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-1h-9c-1.11 0-2-.9-2-2m3-8c-.55 0-1 .45-1 1v6c0 .55.45 1 1 1h9V8zm3 5.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5" fill="#fff"/></svg>`;
   appFavicon.href = `data:image/svg+xml,${encodeURIComponent(iconSvg)}`;
 }
 

@@ -34,6 +34,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const currentNavPage: NavigationPage = activePage || (() => {
     if (location.pathname.startsWith('/transactions')) return 'transactions';
     if (location.pathname.startsWith('/debts')) return 'debts';
+    if (location.pathname.startsWith('/calendar')) return 'calendar';
     if (location.pathname.startsWith('/categories')) return 'categories';
     if (location.pathname.startsWith('/import')) return 'import';
     return 'dashboard';
@@ -49,6 +50,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       subtitle: 'Review, search, filter, and import bank records',
     },
     debts: { title: 'Debts', subtitle: 'Track money lent and repayments received' },
+    calendar: { title: 'Payment Calendar', subtitle: 'Plan future EMIs, bills, and payment reminders' },
     categories: {
       title: 'Category & Group Master',
       subtitle: 'Manage parent categories and their grouped sub-items',
