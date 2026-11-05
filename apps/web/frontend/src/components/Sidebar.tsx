@@ -19,6 +19,7 @@ import CategoryRoundedIcon from '@mui/icons-material/CategoryRounded';
 import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import AccountBalanceWalletRoundedIcon from '@mui/icons-material/AccountBalanceWalletRounded';
 import CreditCardRoundedIcon from '@mui/icons-material/CreditCardRounded';
+import CalendarMonthRoundedIcon from '@mui/icons-material/CalendarMonthRounded';
 
 import { useLocation, useNavigate } from 'react-router-dom';
 import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
@@ -26,7 +27,7 @@ import { useAuth } from '../context/AuthContext';
 
 export const DRAWER_WIDTH = 260;
 
-export type NavigationPage = 'dashboard' | 'transactions' | 'debts' | 'categories' | 'import';
+export type NavigationPage = 'dashboard' | 'transactions' | 'debts' | 'calendar' | 'categories' | 'import';
 
 interface SidebarProps {
   mobileOpen: boolean;
@@ -61,6 +62,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: <ReceiptLongRoundedIcon />,
     },
     { id: 'debts' as const, path: '/debts', label: 'Debts', icon: <AccountBalanceWalletRoundedIcon /> },
+    { id: 'calendar' as const, path: '/calendar', label: 'Payment Calendar', icon: <CalendarMonthRoundedIcon /> },
     {
       id: 'categories' as const,
       path: '/categories',

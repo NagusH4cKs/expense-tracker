@@ -9,4 +9,4 @@ export const PRIMARY_COLORS = {
   darkyellow: '#b5930b',
 } as const;
   
-export const ACTIVE_PRIMARY = PRIMARY_COLORS.deepPurple;
+export const ACTIVE_PRIMARY = PRIMARY_COLORS.deepTeal; // Change this to switch the app's primary color.

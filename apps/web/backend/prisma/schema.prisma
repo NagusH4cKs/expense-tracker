@@ -42,6 +42,7 @@ model Transaction {
   userId            String
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   date              String
+  time              String?
   description       String
   remarks           String?
   category          String
@@ -68,6 +69,24 @@ model Transaction {
   @@index([date])
   @@index([needsReview])
   @@index([isTransfer])
+}
+
+model CalendarEvent {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  dueDate     String
+  dueTime     String?
+  amount      Float?
+  category    String?
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
+  @@index([dueDate])
 }
 
 model CategorizationRule {
@@ -150,6 +169,7 @@ model User {
   budgets Budget[]
   debts Debt[]
   debtRepayments DebtRepayment[]
+  calendarEvents CalendarEvent[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

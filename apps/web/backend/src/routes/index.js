@@ -7,6 +7,7 @@ import budgetRoutes from './budget.routes.js';
 import ruleRoutes from './rule.routes.js';
 import authRoutes from './auth.routes.js';
 import debtRoutes from './debt.routes.js';
+import calendarRoutes from './calendar.routes.js';
 import { requireAuth } from '../middleware/requireAuth.js';
 
 const router = Router();
@@ -24,5 +25,6 @@ router.use('/import', importRoutes);
 router.use('/transactions', transactionRoutes);
 router.use('/budget', budgetRoutes);
 router.use('/debts', debtRoutes);
+router.use('/calendar-events', calendarRoutes);
 
 export default router;

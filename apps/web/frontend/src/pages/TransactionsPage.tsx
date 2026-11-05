@@ -46,21 +46,25 @@ import CategoryRoundedIcon from '@mui/icons-material/CategoryRounded';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import SwapHorizRoundedIcon from '@mui/icons-material/SwapHorizRounded';
 import BookmarkAddRoundedIcon from '@mui/icons-material/BookmarkAddRounded';
+import DriveFileMoveRoundedIcon from '@mui/icons-material/DriveFileMoveRounded';
 
 import { categoryService } from '../services/category.service';
 import { transactionService } from '../services/transaction.service';
 import { ruleService } from '../services/rule.service';
 import { CategoryItem } from '../types/category';
+import { AddTransactionModal } from './AddTransactionModal';
 
 export interface Transaction {
   id: string;
   date: string;
+  time?: string;
   description: string;
   category: string;
   group?: string;
   amount: number;
   type: 'expense' | 'income';
   account: string;
+  reference?: string;
   remarks?: string;
   needsReview?: boolean;
   confidence?: string;
@@ -115,6 +119,7 @@ export const TransactionsPage: React.FC = () => {
 
   // Edit Category Modal State
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
+  const [movingTransaction, setMovingTransaction] = useState<Transaction | null>(null);
   const [editCategory, setEditCategory] = useState<string>('');
   const [editGroup, setEditGroup] = useState<string>('');
   const [editIsTransfer, setEditIsTransfer] = useState<boolean>(false);
@@ -181,6 +186,7 @@ export const TransactionsPage: React.FC = () => {
       const mapped: Transaction[] = res.items.map((t) => ({
         id: t.id,
         date: t.date ? t.date.split('T')[0] : '',
+        time: t.time || undefined,
         description: t.description,
         category: t.category,
         group: t.group || undefined,
@@ -188,6 +194,7 @@ export const TransactionsPage: React.FC = () => {
         type: t.type,
         account: t.account,
         remarks: t.remarks || undefined,
+        reference: t.reference || undefined,
         needsReview: t.needsReview,
         confidence: t.confidence || undefined,
         isTransfer: t.isTransfer,
@@ -646,7 +653,20 @@ export const TransactionsPage: React.FC = () => {
         transactions={transactions}
         onDelete={handleDelete}
         onEdit={handleOpenEdit}
+        onMove={(transaction) => setMovingTransaction(transaction)}
         loading={isLoadingTransactions}
+      />
+
+      <AddTransactionModal
+        open={Boolean(movingTransaction)}
+        initialTransaction={movingTransaction}
+        dbCategories={dbCategories}
+        onClose={() => setMovingTransaction(null)}
+        onSuccess={() => {
+          setMovingTransaction(null);
+          loadTransactions();
+          window.dispatchEvent(new CustomEvent('transaction-updated'));
+        }}
       />
 
       {/* Server-Side Pagination Bar */}
@@ -984,6 +1004,7 @@ interface TransactionTableProps {
   transactions: Transaction[];
   onDelete: (id: string) => void;
   onEdit: (tx: Transaction) => void;
+  onMove: (tx: Transaction) => void;
   loading?: boolean;
 }
 
@@ -991,6 +1012,7 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
   transactions,
   onDelete,
   onEdit,
+  onMove,
   loading = false,
 }) => {
   if (loading) {
@@ -1059,7 +1081,7 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
             >
               AMOUNT
             </TableCell>
-            <TableCell align="right" sx={{ width: 90 }}>
+            <TableCell align="right" sx={{ width: 132 }}>
               ACTIONS
             </TableCell>
           </TableRow>
@@ -1077,6 +1099,7 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
               >
                 <TableCell sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>
                   {t.date}
+                  {t.time && <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>{t.time}</Typography>}
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, color: 'text.primary', maxWidth: 300 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, flexWrap: 'wrap' }}>
@@ -1216,16 +1239,16 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                 </TableCell>
                 <TableCell align="right">
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                    <Tooltip title="Edit Category">
+                    <Tooltip title="Move / edit transaction details">
                       <IconButton
                         size="small"
-                        onClick={() => onEdit(t)}
+                        onClick={() => onMove(t)}
                         sx={{
                           color: '#64748b',
                           '&:hover': { color: 'primary.main', bgcolor: 'color-mix(in srgb, var(--app-primary) 8%, transparent)' },
                         }}
                       >
-                        <EditRoundedIcon fontSize="small" />
+                        <DriveFileMoveRoundedIcon fontSize="small" />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Delete transaction" arrow>

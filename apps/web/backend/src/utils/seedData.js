@@ -20,6 +20,7 @@ export const INITIAL_CATEGORIES = [
   { name: 'Dividend', type: 'income', description: 'Stock & mutual fund dividend payouts' },
   { name: 'Refund', type: 'income', description: 'Refunds and cashbacks' },
   { name: 'Friends', type: 'expense', description: 'Shared expenses, friends & family' },
+  { name: 'Shared Expense', type: 'expense', description: 'Expenses shared with other people' },
   { name: 'Transfer', type: 'transfer', description: 'Internal transfers between own bank accounts' },
   { name: 'Laptop', type: 'expense', description: 'Laptop, peripherals, hardware' },
   { name: 'Stationery', type: 'expense', description: 'Books, pens, stationery supplies' },
