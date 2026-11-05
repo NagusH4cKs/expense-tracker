@@ -8,7 +8,19 @@ dotenv.config();
 export const app = express();
 
 // Middlewares
-app.use(cors());
+const allowedOrigins = (process.env.CORS_ORIGIN || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || process.env.NODE_ENV !== 'production' || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('This website origin is not allowed to access the API'));
+  },
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 

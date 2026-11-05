@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma.js';
+import { currentUserId } from '../config/prisma.js';
 
 export const getAllCategories = async (type) => {
   const where = {};
@@ -37,7 +38,7 @@ export const createCategory = async (data) => {
             groups: {
               create: data.groupNames
                 .filter((g) => g && g.trim())
-                .map((g) => ({ name: g.trim() })),
+                .map((g) => ({ name: g.trim(), userId: currentUserId() })),
             },
           }
         : {}),

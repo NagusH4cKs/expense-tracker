@@ -91,7 +91,6 @@ export const importService = {
   // Confirm import and save into database
   async confirm(
     transactions: ParsedTransactionPreview[],
-    autoCreateGroups = true,
     onProgress?: (progress: ImportProgress) => void,
   ): Promise<ImportConfirmResponse> {
     const selected = transactions.filter((item) => item.selected && item.duplicateStatus !== 'confirmed');
@@ -104,7 +103,6 @@ export const importService = {
       try {
         const res = await apiClient.post<ApiResponse<ImportConfirmResponse>>('/import/confirm', {
           transactions: batch,
-          autoCreateGroups,
         }, { timeout: importTimeout(batch.length) });
         importedCount += res.data.data.importedCount;
         completed += batch.length;

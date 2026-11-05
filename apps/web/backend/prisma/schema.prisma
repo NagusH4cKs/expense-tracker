@@ -9,12 +9,17 @@ datasource db {
 
 model Category {
   id          String   @id @default(uuid())
-  name        String   @unique
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
   type        String   @default("expense") // "expense" | "income"
   description String?
   groups      Group[]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@unique([userId, name])
+  @@index([userId])
 }
 
 model Group {
@@ -23,14 +28,19 @@ model Group {
   description String?
   categoryId  String?
   category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@index([categoryId])
+  @@index([userId])
 }
 
 model Transaction {
   id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   date              String
   description       String
   remarks           String?
@@ -39,7 +49,7 @@ model Transaction {
   amount            Float
   type              String   // "expense" | "income"
   account           String
-  reference         String?  @unique
+  reference         String?
   balance           Float?
   needsReview       Boolean  @default(false)
   confidence        String?  @default("rule") // "high" | "rule" | "low" | "manual"
@@ -51,6 +61,8 @@ model Transaction {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  @@unique([userId, reference])
+  @@index([userId])
   @@index([category])
   @@index([account])
   @@index([date])
@@ -60,6 +72,8 @@ model Transaction {
 
 model CategorizationRule {
   id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   pattern       String   // e.g. "tea, coffee, snacks, juice", "F ", "home", "zerodha"
   matchType     String   @default("contains") // "contains" | "exact" | "prefix" | "regex"
   category      String
@@ -71,12 +85,15 @@ model CategorizationRule {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
+  @@index([userId])
   @@index([priority])
   @@index([isActive])
 }
 
 model Budget {
   id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   year      Int
   month     Int      // 1 - 12
   category  String   @default("ALL") // "ALL" for total monthly budget, or category name (e.g. "Investment")
@@ -84,11 +101,14 @@ model Budget {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([year, month, category])
+  @@unique([userId, year, month, category])
+  @@index([userId])
 }
 
 model Debt {
   id          String        @id @default(uuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   person      String
   description String?
   amount      Float
@@ -99,10 +119,13 @@ model Debt {
 
   @@index([lentDate])
   @@index([person])
+  @@index([userId])
 }
 
 model DebtRepayment {
   id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   debtId    String
   debt      Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
   amount    Float
@@ -111,6 +134,7 @@ model DebtRepayment {
   createdAt DateTime @default(now())
 
   @@index([debtId])
+  @@index([userId])
   @@index([date])
 }
 
@@ -119,6 +143,13 @@ model User {
   username  String   @unique
   password  String
   name      String?
+  categories Category[]
+  groups Group[]
+  transactions Transaction[]
+  rules CategorizationRule[]
+  budgets Budget[]
+  debts Debt[]
+  debtRepayments DebtRepayment[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma.js';
+import { currentUserId } from '../config/prisma.js';
 
 const includeRepayments = { repayments: { orderBy: { date: 'asc' } } };
 
@@ -27,7 +28,7 @@ export const debtService = {
     if (!debt) throw new Error('Debt not found');
     const outstanding = debt.amount - debt.repayments.reduce((sum, item) => sum + item.amount, 0);
     if (value > outstanding + 0.001) throw new Error('Repayment cannot exceed the outstanding amount');
-    const updated = await prisma.debt.update({ where: { id }, data: { repayments: { create: { amount: value, date, note: note?.trim() || null } } }, include: includeRepayments });
+    const updated = await prisma.debt.update({ where: { id }, data: { repayments: { create: { userId: currentUserId(), amount: value, date, note: note?.trim() || null } } }, include: includeRepayments });
     return withBalance(updated);
   },
 };

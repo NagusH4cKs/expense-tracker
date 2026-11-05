@@ -533,7 +533,7 @@ export const preview = async (bufferOrString) => {
 /**
  * Confirm and save transactions with transfer handling, rule auto-learning, and duplicate skipping
  */
-export const confirmImport = async (transactions, autoCreateGroups = true) => {
+export const confirmImport = async (transactions) => {
   if (!Array.isArray(transactions) || transactions.length === 0) {
     throw new Error('No transactions provided for import');
   }
@@ -545,60 +545,20 @@ export const confirmImport = async (transactions, autoCreateGroups = true) => {
     return { success: true, count: 0, message: 'All transactions were duplicates or unselected' };
   }
 
-  // 1. Auto-create missing categories and groups if enabled
-  if (autoCreateGroups) {
-    const distinctPairs = new Map();
-    for (const item of validItems) {
-      if (item.category && item.category !== 'Needs review') {
-        const cat = item.category.trim();
-        const grp = item.group ? item.group.trim() : null;
-        if (!distinctPairs.has(cat)) {
-          distinctPairs.set(cat, new Set());
-        }
-        if (grp) {
-          distinctPairs.get(cat).add(grp);
-        }
-      }
+  // The selected category and group must already belong to this user's master.
+  const masterCategories = await prisma.category.findMany({ include: { groups: true } });
+  const categoryByName = new Map(masterCategories.map((category) => [category.name, category]));
+  const normalizedItems = validItems.map((item) => {
+    if (item.category && item.category !== 'Needs review' && !categoryByName.has(item.category)) {
+      throw new Error(`Category "${item.category}" is not in your Category & Group Master`);
     }
-
-    for (const [catName, groupsSet] of distinctPairs.entries()) {
-      let cat = await prisma.category.findUnique({
-        where: { name: catName },
-        include: { groups: true },
-      });
-
-      if (!cat) {
-        cat = await prisma.category.create({
-          data: {
-            name: catName,
-            type: 'expense',
-            description: 'Created during statement import',
-          },
-          include: { groups: true },
-        });
-      }
-
-      if (groupsSet.size > 0 && cat) {
-        const existingGroupNames = new Set(cat.groups.map((g) => g.name.toLowerCase()));
-        const newGroupsToCreate = Array.from(groupsSet).filter(
-          (g) => !existingGroupNames.has(g.toLowerCase())
-        );
-
-        if (newGroupsToCreate.length > 0) {
-          await prisma.group.createMany({
-            data: newGroupsToCreate.map((g) => ({
-              name: g,
-              categoryId: cat.id,
-              description: 'Auto-categorized from narration',
-            })),
-          });
-        }
-      }
-    }
-  }
+    const category = categoryByName.get(item.category);
+    const group = category?.groups.find((candidate) => candidate.name === item.group)?.name || null;
+    return { ...item, group };
+  });
 
   // 2. High-speed insert with duplicate skipping
-  const recordsToInsert = validItems.map((item) => ({
+  const recordsToInsert = normalizedItems.map((item) => ({
     date: item.date,
     description: item.description,
     remarks: item.rawRemarks || item.description,
@@ -625,7 +585,7 @@ export const confirmImport = async (transactions, autoCreateGroups = true) => {
   return {
     success: true,
     importedCount: result.count,
-    totalReceived: validItems.length,
+    totalReceived: normalizedItems.length,
   };
 };
 

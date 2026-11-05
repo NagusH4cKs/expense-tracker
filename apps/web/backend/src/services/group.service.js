@@ -31,6 +31,10 @@ export const getGroupById = async (id) => {
 };
 
 export const createGroup = async (data) => {
+  if (data.categoryId) {
+    const category = await prisma.category.findUnique({ where: { id: data.categoryId } });
+    if (!category) throw new Error('Category not found');
+  }
   return prisma.group.create({
     data: {
       name: data.name.trim(),
@@ -44,6 +48,10 @@ export const createGroup = async (data) => {
 };
 
 export const updateGroup = async (id, data) => {
+  if (data.categoryId) {
+    const category = await prisma.category.findUnique({ where: { id: data.categoryId } });
+    if (!category) throw new Error('Category not found');
+  }
   return prisma.group.update({
     where: { id },
     data: {

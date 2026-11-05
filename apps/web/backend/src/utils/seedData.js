@@ -210,7 +210,8 @@ export const INITIAL_RULES = [
   },
 ];
 
-export const ensureInitialData = async () => {
+export const ensureInitialData = async (userId) => {
+  if (!userId) throw new Error('A user is required to seed personal categories and rules');
   try {
     // 1. Remove duplicate 'Room Rent' category & rules to keep only 'Rent'
     await prisma.transaction.updateMany({
@@ -234,8 +235,8 @@ export const ensureInitialData = async () => {
     // 2. Seed Categories if missing
     for (const cat of INITIAL_CATEGORIES) {
       await prisma.category.upsert({
-        where: { name: cat.name },
-        update: { type: cat.type, description: cat.description },
+        where: { userId_name: { userId, name: cat.name } },
+        update: {},
         create: { name: cat.name, type: cat.type, description: cat.description },
       });
     }
@@ -250,18 +251,7 @@ export const ensureInitialData = async () => {
         },
       });
 
-      if (existing) {
-        await prisma.categorizationRule.update({
-          where: { id: existing.id },
-          data: {
-            pattern: rule.pattern,
-            group: rule.group,
-            priority: rule.priority,
-            bank: rule.bank || 'ALL',
-            isActive: true,
-          },
-        });
-      } else {
+      if (!existing) {
         await prisma.categorizationRule.create({
           data: rule,
         });
@@ -270,5 +260,6 @@ export const ensureInitialData = async () => {
     console.log(`✅ Synchronized initial categories and categorization rules (Utilities consolidated).`);
   } catch (err) {
     console.warn('Could not seed initial categories/rules:', err.message);
+    throw err;
   }
 };

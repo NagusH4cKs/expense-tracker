@@ -1,7 +1,11 @@
+const configuredApiUrl = import.meta.env.VITE_API_URL;
+
+if (!configuredApiUrl && !import.meta.env.DEV) {
+  throw new Error('Set VITE_API_URL to your own backend API before deploying the frontend.');
+}
+
 export const API_CONFIG = {
-  baseURL: import.meta.env.VITE_API_URL || (import.meta.env.DEV
-    ? 'http://localhost:5000/api'
-    : 'https://expense-tracker-rowe.onrender.com/api'),
+  baseURL: configuredApiUrl || 'http://localhost:5000/api',
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json',

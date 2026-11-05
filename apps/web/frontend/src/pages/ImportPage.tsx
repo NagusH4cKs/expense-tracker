@@ -360,7 +360,7 @@ export const ImportPage: React.FC<ImportPageProps> = ({ onFinish, onNavigateCate
       setLoadingStage('import');
       setImportProgress({ completed: 0, total: selectedCount, imported: 0, batch: 1, batchCount: Math.ceil(selectedCount / IMPORT_BATCH_SIZE) });
       setError(null);
-      const res = await importService.confirm(masterAlignedTransactions, true, setImportProgress);
+      const res = await importService.confirm(masterAlignedTransactions, setImportProgress);
       setImportResult({
         importedCount: res.importedCount,
         totalReceived: res.totalReceived,

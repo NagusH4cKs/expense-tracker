@@ -17,7 +17,7 @@ export const setBudget = async ({ year, month, category = 'ALL', amount }) => {
     throw new Error('Budget amount must be a non-negative number');
   }
   if (key.category !== 'ALL') {
-    const masterCategory = await prisma.category.findUnique({ where: { name: key.category } });
+    const masterCategory = await prisma.category.findFirst({ where: { name: key.category } });
     if (!masterCategory) {
       throw new Error(`Select a valid category from category master. "${key.category}" not found.`);
     }
@@ -26,11 +26,11 @@ export const setBudget = async ({ year, month, category = 'ALL', amount }) => {
     }
   }
 
-  return prisma.budget.upsert({
-    where: { year_month_category: key },
-    update: { amount: parsedAmount },
-    create: { ...key, amount: parsedAmount },
-  });
+  const existing = await prisma.budget.findFirst({ where: key });
+  if (existing) {
+    return prisma.budget.update({ where: { id: existing.id }, data: { amount: parsedAmount } });
+  }
+  return prisma.budget.create({ data: { ...key, amount: parsedAmount } });
 };
 
 export const setBatchBudgets = async ({ year, month, budgets = [] }) => {

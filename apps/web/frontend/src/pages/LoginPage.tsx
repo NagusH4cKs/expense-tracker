@@ -27,11 +27,13 @@ import { useAuth } from '../context/AuthContext';
 export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated } = useAuth();
+  const { login, register, isAuthenticated } = useAuth();
 
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [name, setName] = useState('');
   const [loading, setLoading] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -55,7 +57,9 @@ export const LoginPage: React.FC = () => {
     setLoading(true);
 
     try {
-      const result = await login({ username: username.trim(), password });
+      const result = isRegistering
+        ? await register({ username: username.trim(), password, name: name.trim() || undefined })
+        : await login({ username: username.trim(), password });
       if (result.success) {
         const from = (location.state as any)?.from?.pathname || '/dashboard';
         navigate(from, { replace: true });
@@ -181,11 +185,11 @@ export const LoginPage: React.FC = () => {
                 mb: 0.5,
               }}
             >
-              Sign In
+              {isRegistering ? 'Create Your Account' : 'Sign In'}
             </Typography>
 
             <Typography variant="body2" sx={{ color: '#64748b' }}>
-              Enter your credentials to access your dashboard
+              {isRegistering ? 'Create a private account for this expense tracker' : 'Enter your credentials to access your dashboard'}
             </Typography>
           </Box>
 
@@ -204,6 +208,14 @@ export const LoginPage: React.FC = () => {
 
           {/* Form */}
           <Box component="form" onSubmit={handleSubmit} noValidate>
+            {isRegistering && <TextField
+              label="Name (optional)"
+              fullWidth
+              size="medium"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              sx={{ mb: 2.5 }}
+            />}
             <TextField
               id="login-input-username"
               label="Username"
@@ -238,6 +250,7 @@ export const LoginPage: React.FC = () => {
               placeholder="Enter password"
               sx={{ mb: 3 }}
               slotProps={{
+                htmlInput: { minLength: isRegistering ? 6 : undefined },
                 input: {
                   startAdornment: (
                     <InputAdornment position="start">
@@ -285,10 +298,19 @@ export const LoginPage: React.FC = () => {
               {loading ? (
                 <CircularProgress size={24} sx={{ color: '#ffffff' }} />
               ) : (
-                'Sign In to Dashboard'
+                isRegistering ? 'Create Account' : 'Sign In to Dashboard'
               )}
             </Button>
           </Box>
+
+          <Button
+            fullWidth
+            size="small"
+            onClick={() => { setIsRegistering((value) => !value); setErrorMessage(null); }}
+            sx={{ mt: 1.5 }}
+          >
+            {isRegistering ? 'Already have an account? Sign in' : 'Create a new account'}
+          </Button>
 
           {/* Database Footer Indicator */}
           <Box

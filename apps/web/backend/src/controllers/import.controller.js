@@ -37,7 +37,7 @@ export const preview = async (req, res) => {
 
 export const confirm = async (req, res) => {
   try {
-    const { transactions, autoCreateGroups } = req.body;
+    const { transactions } = req.body;
     if (!Array.isArray(transactions) || transactions.length === 0) {
       return res.status(400).json({
         success: false,
@@ -46,8 +46,7 @@ export const confirm = async (req, res) => {
     }
 
     const result = await importService.confirmImport(
-      transactions,
-      autoCreateGroups !== false
+      transactions
     );
 
     res.status(201).json({ success: true, data: result });

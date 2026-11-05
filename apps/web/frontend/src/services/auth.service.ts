@@ -25,12 +25,4 @@ export const authService = {
     const response = await apiClient.get<{ success: boolean; user: User }>('/auth/me');
     return response.data;
   },
-
-  /**
-   * Seed / Ensure default Sugan user in DB
-   */
-  async seedDefaultUser(): Promise<AuthResponse> {
-    const response = await apiClient.post<AuthResponse>('/auth/seed');
-    return response.data;
-  },
 };

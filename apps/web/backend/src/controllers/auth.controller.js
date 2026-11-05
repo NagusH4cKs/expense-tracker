@@ -1,52 +1,6 @@
-import { prisma } from '../config/prisma.js';
-import { hashPassword, verifyPassword, generateToken, verifyToken } from '../utils/auth.js';
-
-/**
- * Ensure default user 'Sugan' with password 'Sugan@123' exists in the database
- */
-export async function ensureDefaultUser() {
-  if (!process.env.DATABASE_URL) {
-    console.warn('\x1b[33m%s\x1b[0m', '⚠️ [Auth Warning]: DATABASE_URL is not set in your .env file. Please add DATABASE_URL="postgresql://..." to apps/web/.env to connect to your database.');
-    return null;
-  }
-
-  try {
-    const existing = await prisma.user.findFirst({
-      where: {
-        username: {
-          equals: 'Sugan',
-          mode: 'insensitive',
-        },
-      },
-    });
-
-    if (!existing) {
-      const newUser = await prisma.user.create({
-        data: {
-          username: 'Sugan',
-          password: hashPassword('Sugan@123'),
-          name: 'Sugan',
-        },
-      });
-      console.log('✅ Default user Sugan created in database with id:', newUser.id);
-      return newUser;
-    } else {
-      // Ensure password matches Sugan@123
-      if (!verifyPassword('Sugan@123', existing.password)) {
-        await prisma.user.update({
-          where: { id: existing.id },
-          data: {
-            password: hashPassword('Sugan@123'),
-          },
-        });
-        console.log('🔄 Updated password for existing user Sugan to match Sugan@123');
-      }
-      return existing;
-    }
-  } catch (error) {
-    console.error('Error ensuring default user:', error.message || error);
-  }
-}
+import { prisma, runAsUser } from '../config/prisma.js';
+import { hashPassword, verifyPassword, generateToken } from '../utils/auth.js';
+import { ensureInitialData } from '../utils/seedData.js';
 
 /**
  * POST /api/auth/login
@@ -65,7 +19,7 @@ export async function login(req, res) {
     const cleanUsername = username.trim();
 
     // Check if user exists in DB
-    let user = await prisma.user.findFirst({
+    const user = await prisma.user.findFirst({
       where: {
         username: {
           equals: cleanUsername,
@@ -73,11 +27,6 @@ export async function login(req, res) {
         },
       },
     });
-
-    // If Sugan is logging in and not yet seeded, seed now
-    if (!user && cleanUsername.toLowerCase() === 'sugan') {
-      user = await ensureDefaultUser();
-    }
 
     if (!user) {
       return res.status(401).json({
@@ -93,6 +42,8 @@ export async function login(req, res) {
         message: 'Invalid username or password',
       });
     }
+
+    await runAsUser(user.id, () => ensureInitialData(user.id));
 
     const token = generateToken(user.id, user.username);
 
@@ -123,6 +74,13 @@ export async function login(req, res) {
  */
 export async function register(req, res) {
   try {
+    if (process.env.ALLOW_REGISTRATION !== 'true') {
+      return res.status(403).json({
+        success: false,
+        message: 'New account registration is disabled. Enable it temporarily in the backend environment to create your account.',
+      });
+    }
+
     const { username, password, name } = req.body;
 
     if (!username || !password) {
@@ -172,6 +130,8 @@ export async function register(req, res) {
       },
     });
 
+    await runAsUser(newUser.id, () => ensureInitialData(newUser.id));
+
     const token = generateToken(newUser.id, newUser.username);
 
     return res.status(201).json({
@@ -200,90 +160,10 @@ export async function register(req, res) {
  */
 export async function getMe(req, res) {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, message: 'No authorization token provided' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    const payload = verifyToken(token);
-    if (!payload) {
-      return res.status(401).json({ success: false, message: 'Invalid or expired session' });
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { id: payload.userId },
-      select: {
-        id: true,
-        username: true,
-        name: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found in database' });
-    }
-
-    return res.json({
-      success: true,
-      user,
-    });
+    return res.json({ success: true, user: req.user });
   } catch (error) {
     console.error('[Auth Me Error]:', error);
     return res.status(500).json({ success: false, message: 'Server error retrieving user' });
   }
 }
 
-/**
- * GET /api/auth/users
- * List all users in database (useful for verification)
- */
-export async function listUsers(_req, res) {
-  try {
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        username: true,
-        name: true,
-        createdAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
-    return res.json({
-      success: true,
-      count: users.length,
-      users,
-    });
-  } catch (error) {
-    console.error('[Auth List Users Error]:', error);
-    return res.status(500).json({ success: false, message: 'Failed to list users from database' });
-  }
-}
-
-/**
- * POST /api/auth/seed
- * Explicit endpoint to push default Sugan user to DB
- */
-export async function seedUserEndpoint(_req, res) {
-  try {
-    const user = await ensureDefaultUser();
-    return res.json({
-      success: true,
-      message: 'User Sugan successfully ensured in database',
-      user: {
-        id: user.id,
-        username: user.username,
-        name: user.name,
-      },
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to seed user in database',
-      error: error.message,
-    });
-  }
-}
