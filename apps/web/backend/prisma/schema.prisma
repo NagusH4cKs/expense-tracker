@@ -1,0 +1,155 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Category {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  type        String   @default("expense") // "expense" | "income"
+  description String?
+  groups      Group[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+model Group {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([categoryId])
+  @@index([userId])
+}
+
+model Transaction {
+  id                String   @id @default(uuid())
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  date              String
+  description       String
+  remarks           String?
+  category          String
+  group             String?
+  amount            Float
+  type              String   // "expense" | "income"
+  account           String
+  reference         String?
+  balance           Float?
+  needsReview       Boolean  @default(false)
+  confidence        String?  @default("rule") // "high" | "rule" | "low" | "manual"
+  matchedRuleId     String?
+  isTransfer        Boolean  @default(false)
+  transferLinkedId  String?
+  transferStatus    String?  // "linked" | "one_sided"
+  excludeFromReport Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@unique([userId, reference])
+  @@index([userId])
+  @@index([category])
+  @@index([account])
+  @@index([date])
+  @@index([needsReview])
+  @@index([isTransfer])
+}
+
+model CategorizationRule {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pattern       String   // e.g. "tea, coffee, snacks, juice", "F ", "home", "zerodha"
+  matchType     String   @default("contains") // "contains" | "exact" | "prefix" | "regex"
+  category      String
+  group         String?
+  priority      Int      @default(0)
+  bank          String?  @default("ALL") // "ICICI", "SBI", "ALL"
+  isActive      Boolean  @default(true)
+  isUserCreated Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([priority])
+  @@index([isActive])
+}
+
+model Budget {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  year      Int
+  month     Int      // 1 - 12
+  category  String   @default("ALL") // "ALL" for total monthly budget, or category name (e.g. "Investment")
+  amount    Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, year, month, category])
+  @@index([userId])
+}
+
+model Debt {
+  id          String        @id @default(uuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person      String
+  description String?
+  amount      Float
+  lentDate    String
+  repayments  DebtRepayment[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([lentDate])
+  @@index([person])
+  @@index([userId])
+}
+
+model DebtRepayment {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  debtId    String
+  debt      Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  amount    Float
+  date      String
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([debtId])
+  @@index([userId])
+  @@index([date])
+}
+
+model User {
+  id        String   @id @default(uuid())
+  username  String   @unique
+  password  String
+  name      String?
+  categories Category[]
+  groups Group[]
+  transactions Transaction[]
+  rules CategorizationRule[]
+  budgets Budget[]
+  debts Debt[]
+  debtRepayments DebtRepayment[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

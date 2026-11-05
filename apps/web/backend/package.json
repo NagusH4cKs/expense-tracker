@@ -1,0 +1,24 @@
+{
+  "name": "expense-tracker-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch-path=src src/server.js",
+    "start": "prisma generate && node src/server.js",
+    "postinstall": "prisma generate",
+    "prisma:generate": "prisma generate",
+    "test": "node --test",
+    "prisma:push": "prisma db push",
+    "prisma:seed": "node prisma/seed.js"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "multer": "^2.4.0",
+    "prisma": "^6.19.3",
+    "xlsx": "^0.18.5"
+  }
+}

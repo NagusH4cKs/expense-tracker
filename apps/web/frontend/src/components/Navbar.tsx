@@ -1,0 +1,211 @@
+import React from 'react';
+import {
+  AppBar,
+  Toolbar,
+  Typography,
+  IconButton,
+  Box,
+  Button,
+  Avatar,
+  Tooltip,
+} from '@mui/material';
+import { useLocation, useNavigate } from 'react-router-dom';
+import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
+import AddRoundedIcon from '@mui/icons-material/AddRounded';
+import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
+import { DRAWER_WIDTH, NavigationPage } from './Sidebar';
+import { useAuth } from '../context/AuthContext';
+
+interface NavbarProps {
+  onDrawerToggle: () => void;
+  activePage?: NavigationPage;
+  onAddTransaction: () => void;
+}
+
+export const Navbar: React.FC<NavbarProps> = ({
+  onDrawerToggle,
+  activePage,
+  onAddTransaction,
+}) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { user, logout } = useAuth();
+
+  const currentNavPage: NavigationPage = activePage || (() => {
+    if (location.pathname.startsWith('/transactions')) return 'transactions';
+    if (location.pathname.startsWith('/debts')) return 'debts';
+    if (location.pathname.startsWith('/categories')) return 'categories';
+    if (location.pathname.startsWith('/import')) return 'import';
+    return 'dashboard';
+  })();
+
+  const titles: Record<NavigationPage, { title: string; subtitle: string }> = {
+    dashboard: {
+      title: 'Financial Dashboard',
+      subtitle: 'Overview, cash flow, and quick insights',
+    },
+    transactions: {
+      title: 'Transactions Ledger',
+      subtitle: 'Review, search, filter, and import bank records',
+    },
+    debts: { title: 'Debts', subtitle: 'Track money lent and repayments received' },
+    categories: {
+      title: 'Category & Group Master',
+      subtitle: 'Manage parent categories and their grouped sub-items',
+    },
+    import: {
+      title: 'Import Bank Statement',
+      subtitle: 'Upload CSV or Excel, auto-map columns, classify categories & prevent duplicates',
+    },
+  };
+
+  const { title: pageTitle, subtitle: pageSubtitle } = titles[currentNavPage] || titles.dashboard;
+
+  return (
+    <AppBar
+      position="fixed"
+      color="inherit"
+      elevation={0}
+      sx={{
+        width: { md: `calc(100% - ${DRAWER_WIDTH}px)` },
+        ml: { md: `${DRAWER_WIDTH}px` },
+        bgcolor: 'rgba(255, 255, 255, 0.88)',
+        backdropFilter: 'blur(10px)',
+        borderBottom: '1px solid #e2e8f0',
+        zIndex: (theme) => theme.zIndex.drawer + 1,
+      }}
+    >
+      <Toolbar
+        disableGutters
+        sx={{
+          px: { xs: 2, sm: 3, md: 4 },
+          minHeight: { xs: 64, sm: 70 },
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        {/* Left: Mobile Menu Toggle & Title */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
+          <IconButton
+            color="inherit"
+            aria-label="open navigation drawer"
+            edge="start"
+            onClick={onDrawerToggle}
+            sx={{
+              display: { md: 'none' },
+              border: '1px solid #e2e8f0',
+              borderRadius: 2,
+              p: 1,
+            }}
+          >
+            <MenuRoundedIcon fontSize="small" />
+          </IconButton>
+
+          <Box sx={{ minWidth: 0 }}>
+            <Typography
+              variant="h6"
+              component="h1"
+              sx={{
+                fontWeight: 700,
+                fontSize: { xs: '1.05rem', sm: '1.25rem' },
+                lineHeight: 1.2,
+                color: 'text.primary',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {pageTitle}
+            </Typography>
+            <Typography
+              variant="caption"
+              sx={{
+                color: 'text.secondary',
+                display: { xs: 'none', sm: 'block' },
+                fontSize: '0.78rem',
+              }}
+            >
+              {pageSubtitle}
+            </Typography>
+          </Box>
+        </Box>
+
+        {/* Right Actions */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 1.5 } }}>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddRoundedIcon />}
+            onClick={onAddTransaction}
+            sx={{
+              whiteSpace: 'nowrap',
+              display: { xs: 'inline-flex' },
+              fontSize: { xs: '0.8rem', sm: '0.875rem' },
+              py: { xs: 0.7, sm: 1 },
+              px: { xs: 1.5, sm: 2 },
+            }}
+          >
+            Add
+          </Button>
+
+          {user && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                bgcolor: '#f1f5f9',
+                px: 1.2,
+                py: 0.5,
+                borderRadius: 3,
+                border: '1px solid #e2e8f0',
+              }}
+            >
+              <Avatar
+                sx={{
+                  width: 28,
+                  height: 28,
+                  bgcolor: 'primary.main',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                }}
+              >
+                {user.username.charAt(0).toUpperCase()}
+              </Avatar>
+              <Typography
+                variant="caption"
+                sx={{
+                  fontWeight: 700,
+                  color: 'text.primary',
+                  display: { xs: 'none', sm: 'block' },
+                }}
+              >
+                {user.name || user.username}
+              </Typography>
+            </Box>
+          )}
+
+          <Tooltip title="Sign Out">
+            <IconButton
+              size="small"
+              onClick={() => {
+                logout();
+                navigate('/login');
+              }}
+              sx={{
+                border: '1px solid #e2e8f0',
+                borderRadius: 2,
+                p: 0.8,
+                color: '#64748b',
+                '&:hover': { color: '#ef4444', bgcolor: '#fee2e2' },
+              }}
+            >
+              <LogoutRoundedIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Box>
+      </Toolbar>
+    </AppBar>
+  );
+};

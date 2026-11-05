@@ -1,0 +1,12 @@
+{
+  "name": "expense-tracker-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix apps/web",
+    "dev:backend": "npm run dev --prefix apps/web/backend",
+    "dev:frontend": "npm run dev --prefix apps/web/frontend",
+    "build": "npm run build --prefix apps/web",
+    "install:all": "npm install --prefix apps/web/backend && npm install --prefix apps/web/frontend"
+  }
+}
