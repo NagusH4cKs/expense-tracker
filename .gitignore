@@ -49,3 +49,4 @@ Thumbs.db
 scratch/
 .temp/
 .cache/
+.vercel

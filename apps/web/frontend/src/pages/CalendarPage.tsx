@@ -195,14 +195,14 @@ export const CalendarPage: React.FC = () => {
       }}
     >
       <CardContent sx={{ p: compact ? 0.8 : 1.5, '&:last-child': { pb: compact ? 0.8 : 1.5 } }}>
-        <Stack direction="row" alignItems="flex-start" spacing={0.5}>
+        <Stack direction="row" spacing={0.5} sx={{ alignItems: 'flex-start' }}>
           <Checkbox
             checked={event.isCompleted}
             size="small"
             onClick={(e) => e.stopPropagation()}
             onChange={() => toggleComplete(event)}
             sx={{ p: 0.25, mt: -0.2 }}
-            inputProps={{ 'aria-label': event.isCompleted ? 'Mark reminder not done' : 'Mark reminder done' }}
+            slotProps={{ input: { 'aria-label': event.isCompleted ? 'Mark reminder not done' : 'Mark reminder done' } }}
           />
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography
@@ -274,8 +274,8 @@ export const CalendarPage: React.FC = () => {
       {pageError && <Alert severity="error" onClose={() => setPageError('')}>{pageError}</Alert>}
 
       <Paper variant="outlined" sx={{ p: { xs: 1.5, sm: 2.5 }, borderRadius: 3 }}>
-        <Stack direction={{ xs: 'column', md: 'row' }} alignItems={{ xs: 'stretch', md: 'center' }} justifyContent="space-between" spacing={2} sx={{ mb: 2.5 }}>
-          <Stack direction="row" alignItems="center" spacing={1}>
+        <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} sx={{ mb: 2.5, alignItems: { xs: 'stretch', md: 'center' }, justifyContent: 'space-between' }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
             <Tooltip title="Previous">
               <IconButton aria-label="Previous period" onClick={() => setAnchorDate((date) => shiftAnchor(date, view, -1))}>
                 <ArrowBackIosNewRoundedIcon fontSize="small" />
@@ -392,7 +392,7 @@ export const CalendarPage: React.FC = () => {
           </Grid>
         )}
 
-        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2, color: 'text.secondary' }}>
+        <Stack direction="row" spacing={1} sx={{ mt: 2, color: 'text.secondary', alignItems: 'center' }}>
           <CheckCircleRoundedIcon fontSize="small" color="success" />
           <Typography variant="caption">Checking a reminder marks it complete; it does not create an expense transaction.</Typography>
         </Stack>
