@@ -1,0 +1,44 @@
+name: Deploy expense tracker
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/web/frontend/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web/frontend
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@65.12.1
+
+      - name: Pull Vercel project settings and production environment
+        run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+
+      - name: Build for production
+        run: vercel build --prod --token="$VERCEL_TOKEN"
+
+      - name: Deploy to production
+        run: vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
