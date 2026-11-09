@@ -1239,7 +1239,7 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                 </TableCell>
                 <TableCell align="right">
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
-                    <Tooltip title="Move / edit transaction details">
+                    <Tooltip title="Move transaction to another date or edit its details">
                       <IconButton
                         size="small"
                         onClick={() => onMove(t)}

@@ -247,10 +247,10 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
             </Box>
             <Box>
               <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                {initialTransaction ? 'Edit Transaction' : 'Add New Transaction'}
+                {initialTransaction ? 'Edit or Move Transaction' : 'Add New Transaction'}
               </Typography>
               <Typography variant="caption" color="text.secondary">
-                {initialTransaction ? 'Update the date and details for this transaction' : 'Manual entry with instant budget & ledger sync'}
+                {initialTransaction ? 'Change the date to move it to another day or month; update other details as needed' : 'Manual entry with instant budget & ledger sync'}
               </Typography>
             </Box>
           </Box>
