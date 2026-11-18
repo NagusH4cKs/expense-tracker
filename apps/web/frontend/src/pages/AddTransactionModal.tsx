@@ -72,6 +72,7 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
   const [customAccount, setCustomAccount] = useState<string>('');
   const [remarks, setRemarks] = useState<string>('');
   const [reference, setReference] = useState<string>('');
+  const [splitShares, setSplitShares] = useState<Array<{ participant: string; amount: string; isSelf: boolean }>>([]);
 
   // UI State
   const [loading, setLoading] = useState<boolean>(false);
@@ -99,6 +100,11 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
       setCustomAccount(COMMON_ACCOUNTS.includes(initialTransaction.account) ? '' : initialTransaction.account);
       setRemarks(initialTransaction.remarks || '');
       setReference(initialTransaction.reference || '');
+      setSplitShares((initialTransaction.splitShares || []).map((share) => ({
+        participant: share.participant,
+        amount: String(share.amount),
+        isSelf: share.isSelf,
+      })));
     } else {
       setType('expense');
       setAmount('');
@@ -111,6 +117,7 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
       setCustomAccount('');
       setRemarks('');
       setReference('');
+      setSplitShares([]);
     }
   }, [open, initialTransaction?.id, todayStr]);
 
@@ -161,6 +168,14 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
       return;
     }
 
+    if (initialTransaction?.splitShares?.length) {
+      const allocated = splitShares.reduce((sum, share) => sum + (Number(share.amount) || 0), 0);
+      if (Math.abs(allocated - parsedAmount) > 0.001) {
+        setErrorMsg('Adjust the split shares so they equal the new transaction amount.');
+        return;
+      }
+    }
+
     if (!description.trim()) {
       setErrorMsg('Please enter a description for this transaction');
       return;
@@ -190,6 +205,9 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
         account: finalAccount,
         remarks: remarks.trim() || undefined,
         reference: reference.trim() || undefined,
+        ...(initialTransaction?.splitShares?.length ? {
+          shares: splitShares.map((share) => ({ ...share, amount: Number(share.amount) })),
+        } : {}),
       };
       if (initialTransaction) await transactionService.update(initialTransaction.id, payload);
       else await transactionService.create(payload);
@@ -346,6 +364,32 @@ export const AddTransactionModal: React.FC<AddTransactionModalProps> = ({
               slotProps={{ inputLabel: { shrink: true } }}
             />
           </Box>
+
+          {initialTransaction?.splitShares?.length ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>Split allocations</Typography>
+              {splitShares.map((share, index) => (
+                <Box key={share.participant} sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <Typography sx={{ flex: 1, fontWeight: 600 }}>
+                    {share.isSelf ? 'Your share' : share.participant}
+                  </Typography>
+                  <TextField
+                    label="Share amount"
+                    type="number"
+                    value={share.amount}
+                    onChange={(event) => setSplitShares((rows) => rows.map((row, rowIndex) => (
+                      rowIndex === index ? { ...row, amount: event.target.value } : row
+                    )))}
+                    slotProps={{ htmlInput: { min: '0', step: '0.01' } }}
+                    sx={{ width: 170 }}
+                  />
+                </Box>
+              ))}
+              <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right' }}>
+                Allocated ₹{splitShares.reduce((sum, share) => sum + (Number(share.amount) || 0), 0).toFixed(2)} / ₹{Number(amount || 0).toFixed(2)}
+              </Typography>
+            </Box>
+          ) : null}
 
           {/* 3. Description */}
           <TextField

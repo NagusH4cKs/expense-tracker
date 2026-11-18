@@ -47,6 +47,7 @@ import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import SwapHorizRoundedIcon from '@mui/icons-material/SwapHorizRounded';
 import BookmarkAddRoundedIcon from '@mui/icons-material/BookmarkAddRounded';
 import DriveFileMoveRoundedIcon from '@mui/icons-material/DriveFileMoveRounded';
+import CallSplitRoundedIcon from '@mui/icons-material/CallSplitRounded';
 
 import { categoryService } from '../services/category.service';
 import { transactionService } from '../services/transaction.service';
@@ -72,6 +73,8 @@ export interface Transaction {
   transferLinkedId?: string;
   transferStatus?: string;
   excludeFromReport?: boolean;
+  refundForId?: string | null;
+  splitShares?: Array<{ id: string; participant: string; amount: number; isSelf: boolean; settlements?: Array<{ amount: number; date: string; direction: string }> }>;
 }
 
 const DEFAULT_CATEGORIES: readonly string[] = [
@@ -120,6 +123,8 @@ export const TransactionsPage: React.FC = () => {
   // Edit Category Modal State
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [movingTransaction, setMovingTransaction] = useState<Transaction | null>(null);
+  const [splittingTransaction, setSplittingTransaction] = useState<Transaction | null>(null);
+  const [linkingRefund, setLinkingRefund] = useState<Transaction | null>(null);
   const [editCategory, setEditCategory] = useState<string>('');
   const [editGroup, setEditGroup] = useState<string>('');
   const [editIsTransfer, setEditIsTransfer] = useState<boolean>(false);
@@ -201,6 +206,8 @@ export const TransactionsPage: React.FC = () => {
         transferLinkedId: t.transferLinkedId || undefined,
         transferStatus: t.transferStatus || undefined,
         excludeFromReport: t.excludeFromReport,
+        refundForId: t.refundForId,
+        splitShares: t.splitShares,
       }));
 
       setTransactions(mapped);
@@ -654,6 +661,8 @@ export const TransactionsPage: React.FC = () => {
         onDelete={handleDelete}
         onEdit={handleOpenEdit}
         onMove={(transaction) => setMovingTransaction(transaction)}
+        onSplit={(transaction) => setSplittingTransaction(transaction)}
+        onLinkRefund={(transaction) => setLinkingRefund(transaction)}
         loading={isLoadingTransactions}
       />
 
@@ -667,6 +676,17 @@ export const TransactionsPage: React.FC = () => {
           loadTransactions();
           window.dispatchEvent(new CustomEvent('transaction-updated'));
         }}
+      />
+
+      <SplitTransactionDialog
+        transaction={splittingTransaction}
+        onClose={() => setSplittingTransaction(null)}
+        onSuccess={() => { setSplittingTransaction(null); loadTransactions(); window.dispatchEvent(new CustomEvent('transaction-updated')); }}
+      />
+      <LinkRefundDialog
+        transaction={linkingRefund}
+        onClose={() => setLinkingRefund(null)}
+        onSuccess={() => { setLinkingRefund(null); loadTransactions(); window.dispatchEvent(new CustomEvent('transaction-updated')); }}
       />
 
       {/* Server-Side Pagination Bar */}
@@ -1005,6 +1025,8 @@ interface TransactionTableProps {
   onDelete: (id: string) => void;
   onEdit: (tx: Transaction) => void;
   onMove: (tx: Transaction) => void;
+  onSplit: (tx: Transaction) => void;
+  onLinkRefund: (tx: Transaction) => void;
   loading?: boolean;
 }
 
@@ -1013,6 +1035,8 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
   onDelete,
   onEdit,
   onMove,
+  onSplit,
+  onLinkRefund,
   loading = false,
 }) => {
   if (loading) {
@@ -1239,6 +1263,8 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
                 </TableCell>
                 <TableCell align="right">
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 0.5 }}>
+                    {t.type === 'expense' && !t.excludeFromReport && <Tooltip title="Split this expense with friends"><IconButton size="small" onClick={() => onSplit(t)} sx={{ color: 'primary.main' }}><CallSplitRoundedIcon fontSize="small" /></IconButton></Tooltip>}
+                    {t.type === 'income' && t.category.toLowerCase() === 'refund' && <Button size="small" onClick={() => onLinkRefund(t)}>{t.refundForId ? 'Refund linked' : 'Link refund'}</Button>}
                     <Tooltip title="Move transaction to another date or edit its details">
                       <IconButton
                         size="small"
@@ -1283,3 +1309,76 @@ const TransactionTable: React.FC<TransactionTableProps> = ({
 };
 
 export default TransactionsPage;
+
+const SplitTransactionDialog: React.FC<{ transaction: Transaction | null; onClose: () => void; onSuccess: () => void }> = ({ transaction, onClose, onSuccess }) => {
+  const [shares, setShares] = useState<Array<{ participant: string; amount: string; isSelf: boolean }>>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!transaction) return;
+    setShares(transaction.splitShares?.length
+      ? transaction.splitShares.map((share) => ({ participant: share.participant, amount: String(share.amount), isSelf: share.isSelf }))
+      : [{ participant: 'You', amount: String(transaction.amount), isSelf: true }, { participant: '', amount: '', isSelf: false }]);
+    setError('');
+  }, [transaction?.id]);
+  const total = shares.reduce((sum, share) => sum + (Number(share.amount) || 0), 0);
+  const addFriend = () => setShares((rows) => [...rows, { participant: '', amount: '', isSelf: false }]);
+  const setRow = (index: number, patch: Partial<(typeof shares)[number]>) => setShares((rows) => rows.map((row, i) => i === index ? { ...row, ...patch } : row));
+  const splitEvenly = () => {
+    if (!transaction || !shares.length) return;
+    const each = Math.floor((transaction.amount / shares.length) * 100) / 100;
+    const next = shares.map((share) => ({ ...share, amount: each.toFixed(2) }));
+    next[next.length - 1].amount = (transaction.amount - each * (shares.length - 1)).toFixed(2);
+    setShares(next);
+  };
+  const save = async () => {
+    if (!transaction) return;
+    setSaving(true); setError('');
+    try {
+      await transactionService.saveSplit(transaction.id, shares.map((share) => ({ participant: share.isSelf ? 'You' : share.participant.trim(), amount: Number(share.amount), isSelf: share.isSelf })));
+      onSuccess();
+    } catch (e: any) { setError(e.response?.data?.message || e.message || 'Could not save split'); }
+    finally { setSaving(false); }
+  };
+  return <Dialog open={Boolean(transaction)} onClose={() => !saving && onClose()} fullWidth maxWidth="sm"><DialogTitle>Split expense</DialogTitle><DialogContent>
+    {transaction && <Typography color="text.secondary" sx={{ mb: 1 }}>{transaction.description} · {formatCurrency(transaction.amount)} total</Typography>}
+    {shares.map((share, index) => <Box key={`${index}-${share.isSelf ? 'you' : 'friend'}`} sx={{ display: 'flex', gap: 1, alignItems: 'center', my: 1 }}>
+      {share.isSelf ? <TextField label="Your share" value="You" disabled sx={{ flex: 1 }} /> : <TextField label="Friend" value={share.participant} onChange={(e) => setRow(index, { participant: e.target.value })} sx={{ flex: 1 }} />}
+      <TextField label="Share amount" type="number" value={share.amount} onChange={(e) => setRow(index, { amount: e.target.value })} slotProps={{ htmlInput: { min: 0, step: 0.01 } }} sx={{ width: 150 }} />
+      {!share.isSelf && <Button color="error" onClick={() => setShares((rows) => rows.filter((_row, i) => i !== index))}>Remove</Button>}
+    </Box>)}
+    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center', mt: 1 }}><Button onClick={addFriend}>Add friend</Button><Button onClick={splitEvenly} disabled={!shares.length}>Split evenly</Button><Typography variant="body2" sx={{ ml: 'auto', fontWeight: 700 }}>Allocated {formatCurrency(total)} / {formatCurrency(transaction?.amount || 0)}</Typography></Box>
+    {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+  </DialogContent><DialogActions><Button onClick={onClose} disabled={saving}>Cancel</Button><Button variant="contained" onClick={save} disabled={saving || Math.abs(total - (transaction?.amount || 0)) > 0.01 || shares.some((share) => !share.isSelf && !share.participant.trim())}>{saving ? 'Saving…' : 'Save split'}</Button></DialogActions></Dialog>;
+};
+
+const LinkRefundDialog: React.FC<{ transaction: Transaction | null; onClose: () => void; onSuccess: () => void }> = ({ transaction, onClose, onSuccess }) => {
+  const [candidates, setCandidates] = useState<Array<Transaction & { refundableAmount: number }>>([]);
+  const [purchaseId, setPurchaseId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!transaction) return;
+    let active = true;
+    setLoading(true); setError('');
+    transactionService.getRefundCandidates(transaction.id).then((items: any[]) => {
+      if (!active) return;
+      setCandidates(items as any);
+      setPurchaseId(transaction.refundForId || '');
+    }).catch((e: any) => setError(e.response?.data?.message || e.message || 'Could not load purchases')).finally(() => active && setLoading(false));
+    return () => { active = false; };
+  }, [transaction?.id]);
+  const save = async () => {
+    if (!transaction || !purchaseId) return;
+    setSaving(true); setError('');
+    try { await transactionService.linkRefund(transaction.id, purchaseId); onSuccess(); }
+    catch (e: any) { setError(e.response?.data?.message || e.message || 'Could not link refund'); }
+    finally { setSaving(false); }
+  };
+  return <Dialog open={Boolean(transaction)} onClose={() => !saving && onClose()} fullWidth maxWidth="sm"><DialogTitle>Link refund to purchase</DialogTitle><DialogContent>
+    {transaction && <Typography color="text.secondary" sx={{ mb: 2 }}>{transaction.description} · {formatCurrency(transaction.amount)} refund. It will reduce spending and will not count as income.</Typography>}
+    {loading ? <CircularProgress size={24} /> : <FormControl fullWidth><InputLabel id="refund-purchase-label">Original purchase</InputLabel><Select labelId="refund-purchase-label" label="Original purchase" value={purchaseId} onChange={(e) => setPurchaseId(String(e.target.value))}><MenuItem value=""><em>Select a purchase</em></MenuItem>{candidates.map((item) => <MenuItem key={item.id} value={item.id}>{item.date} · {item.description} · {formatCurrency(item.amount)} ({formatCurrency(item.refundableAmount)} refundable)</MenuItem>)}</Select></FormControl>}
+    {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+  </DialogContent><DialogActions><Button onClick={onClose} disabled={saving}>Cancel</Button>{transaction?.refundForId && <Button color="warning" onClick={async () => { if (!transaction) return; setSaving(true); try { await transactionService.linkRefund(transaction.id, null); onSuccess(); } catch (e: any) { setError(e.response?.data?.message || e.message); } finally { setSaving(false); } }}>Unlink</Button>}<Button variant="contained" onClick={save} disabled={saving || loading || !purchaseId}>{saving ? 'Saving…' : 'Link refund'}</Button></DialogActions></Dialog>;
+};

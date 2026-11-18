@@ -1,1 +1,27 @@
-{"expo":{"name":"Expense Tracker","slug":"expense-tracker","version":"1.0.0","scheme":"expense-tracker","plugins":["expo-router"]}}
+{
+  "expo": {
+    "name": "Expense Tracker",
+    "slug": "expense-tracker",
+    "version": "1.0.0",
+    "scheme": "expense-tracker",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.expensetracker.mobile"
+    },
+    "android": {
+      "package": "com.expensetracker.mobile",
+      "adaptiveIcon": {
+        "backgroundColor": "#2563eb"
+      }
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      "expo-document-picker",
+      "expo-asset",
+      "expo-status-bar"
+    ]
+  }
+}

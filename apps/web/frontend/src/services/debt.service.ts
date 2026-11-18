@@ -7,10 +7,10 @@ export interface DebtItem {
 }
 export const debtService = {
   async list(): Promise<DebtItem[]> { return (await apiClient.get('/debts')).data.data; },
-  async create(data: { person: string; description?: string; amount: number; lentDate: string }): Promise<DebtItem> {
+  async create(data: { person: string; description?: string; amount: number; lentDate: string; sourceTransactionId?: string }): Promise<DebtItem> {
     return (await apiClient.post('/debts', data)).data.data;
   },
-  async repay(id: string, data: { amount: number; date: string; note?: string }): Promise<DebtItem> {
+  async repay(id: string, data: { amount: number; date: string; note?: string; transactionId?: string }): Promise<DebtItem> {
     return (await apiClient.post(`/debts/${id}/repayments`, data)).data.data;
   },
 };

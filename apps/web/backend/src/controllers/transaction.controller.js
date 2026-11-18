@@ -125,6 +125,31 @@ export const getAnalytics = async (req, res) => {
   }
 };
 
+export const getRefundCandidates = async (req, res) => {
+  try { res.json({ success: true, data: await transactionService.getRefundCandidates(req.params.id) }); }
+  catch (error) { res.status(400).json({ success: false, message: error.message }); }
+};
+
+export const linkRefund = async (req, res) => {
+  try { res.json({ success: true, data: await transactionService.linkRefund(req.params.id, req.body.originalTransactionId) }); }
+  catch (error) { res.status(400).json({ success: false, message: error.message }); }
+};
+
+export const saveSplit = async (req, res) => {
+  try { res.json({ success: true, data: await transactionService.saveSplit(req.params.id, req.body.shares) }); }
+  catch (error) { res.status(400).json({ success: false, message: error.message }); }
+};
+
+export const getSplitReceivables = async (_req, res) => {
+  try { res.json({ success: true, data: await transactionService.getSplitReceivables() }); }
+  catch (error) { res.status(500).json({ success: false, message: error.message }); }
+};
+
+export const settleSplitShare = async (req, res) => {
+  try { res.status(201).json({ success: true, data: await transactionService.settleSplitShare(req.params.shareId, req.body) }); }
+  catch (error) { res.status(400).json({ success: false, message: error.message }); }
+};
+
 export const transactionController = {
   getTransactions,
   filterTransactions,
@@ -133,4 +158,9 @@ export const transactionController = {
   deleteTransaction,
   getSummary,
   getAnalytics,
+  getRefundCandidates,
+  linkRefund,
+  saveSplit,
+  getSplitReceivables,
+  settleSplitShare,
 };

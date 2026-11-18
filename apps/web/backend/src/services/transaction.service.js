@@ -2,6 +2,10 @@ import { prisma } from '../config/prisma.js';
 import { ruleService } from './rule.service.js';
 
 export const getAllTransactions = async (filters = {}) => {
+  await prisma.transaction.updateMany({
+    where: { category: { equals: 'Refund', mode: 'insensitive' }, type: 'income', refundForId: null, needsReview: false },
+    data: { needsReview: true },
+  });
   const where = {};
 
   if (filters.category && filters.category !== 'All') {
@@ -68,6 +72,7 @@ export const getAllTransactions = async (filters = {}) => {
       skip,
       take: limit,
       orderBy: { date: 'desc' },
+      include: transactionDetails,
     }),
   ]);
 
@@ -84,6 +89,14 @@ export const getAllTransactions = async (filters = {}) => {
       hasPrevPage: page > 1,
     },
   };
+};
+
+const transactionDetails = {
+  refunds: { select: { id: true, amount: true, date: true } },
+  refundFor: { include: { splitShares: true } },
+  splitShares: { include: { settlements: true } },
+  debtDisbursement: true,
+  debtRepayment: true,
 };
 
 export const createTransaction = async (data) => {
@@ -135,7 +148,7 @@ export const createTransaction = async (data) => {
       account: account.trim(),
       reference: manualRef,
       balance: balance !== undefined && !isNaN(parseFloat(balance)) ? parseFloat(balance) : null,
-      needsReview: Boolean(needsReview),
+      needsReview: Boolean(needsReview || (type === 'income' && category.trim().toLowerCase() === 'refund')),
       confidence: 'manual',
       isTransfer: isTransferCategory,
       excludeFromReport: Boolean(excludeFromReport || isTransferCategory),
@@ -149,18 +162,62 @@ export const deleteTransaction = async (id) => {
   });
 };
 
+const normalizeSplitShares = (shares, transactionAmount) => {
+  if (!Array.isArray(shares) || shares.length < 2) throw new Error('A split needs your share and at least one friend');
+  const normalized = shares.map((share) => ({
+    participant: String(share.participant || '').trim(),
+    amount: Number(share.amount),
+    isSelf: Boolean(share.isSelf),
+  }));
+  if (normalized.some((share) => !share.participant || !Number.isFinite(share.amount) || share.amount < 0)) {
+    throw new Error('Each split needs a participant and a valid non-negative amount');
+  }
+  if (normalized.filter((share) => share.isSelf).length !== 1) throw new Error('A split must contain exactly one “You” share');
+  if (normalized.some((share) => !share.isSelf && share.amount <= 0)) throw new Error('Friend shares must be greater than zero');
+  const names = normalized.map((share) => share.participant.toLowerCase());
+  if (new Set(names).size !== names.length) throw new Error('Participant names must be unique in this split');
+  const total = roundMoney(normalized.reduce((sum, share) => sum + share.amount, 0));
+  if (Math.abs(total - transactionAmount) > 0.001) throw new Error('Split shares must add up to the transaction amount');
+  return normalized;
+};
+
+const replaceSplitShares = async (db, transactionId, existingShares, normalizedShares) => {
+  const existingByName = new Map(existingShares.map((share) => [share.participant.toLowerCase(), share]));
+  const keepNames = new Set(normalizedShares.map((share) => share.participant.toLowerCase()));
+  for (const existing of existingShares) {
+    if (!keepNames.has(existing.participant.toLowerCase())) {
+      await db.transactionSplitShare.delete({ where: { id: existing.id } });
+    }
+  }
+  for (const share of normalizedShares) {
+    const existing = existingByName.get(share.participant.toLowerCase());
+    if (existing) {
+      await db.transactionSplitShare.update({
+        where: { id: existing.id },
+        data: { amount: share.amount, participant: share.participant, isSelf: share.isSelf },
+      });
+    } else {
+      await db.transactionSplitShare.create({ data: { transactionId, ...share } });
+    }
+  }
+};
+
 export const updateTransaction = async (id, data) => {
-  const existing = await prisma.transaction.findUnique({ where: { id } });
+  const existing = await prisma.transaction.findUnique({
+    where: { id },
+    include: { splitShares: { include: { settlements: true } }, refunds: true },
+  });
   if (!existing) {
     throw new Error('Transaction not found');
   }
 
   const updateData = {};
+  let newAmount = existing.amount;
+  let normalizedShares = null;
   if (data.category !== undefined) {
     updateData.category = String(data.category).trim();
-    // If user edited category from 'Needs review', mark review resolved
     if (updateData.category !== 'Needs review') {
-      updateData.needsReview = false;
+      updateData.needsReview = updateData.category.toLowerCase() === 'refund' && existing.type === 'income';
       updateData.confidence = 'manual';
     }
   }
@@ -178,7 +235,28 @@ export const updateTransaction = async (id, data) => {
     if (isNaN(amt) || amt <= 0) {
       throw new Error('Transaction amount must be a positive number');
     }
+    newAmount = amt;
     updateData.amount = amt;
+  }
+  const amountChanged = Math.abs(newAmount - existing.amount) > 0.001;
+  if (existing.refunds.length && amountChanged) throw new Error('Unlink or reallocate refunds before changing this purchase amount.');
+  if (existing.splitShares.length && amountChanged && !Array.isArray(data.shares)) {
+    throw new Error('Update the split shares so they add up to the new transaction amount.');
+  }
+  if (data.shares !== undefined) {
+    if (!existing.splitShares.length) throw new Error('Use the split action before editing split allocations.');
+    normalizedShares = normalizeSplitShares(data.shares, newAmount);
+    const existingByName = new Map(existing.splitShares.map((share) => [share.participant.toLowerCase(), share]));
+    if (existing.refunds.length && normalizedShares.some((share) => {
+      const current = existingByName.get(share.participant.toLowerCase());
+      return !current || Math.abs(current.amount - share.amount) > 0.001 || current.isSelf !== share.isSelf;
+    })) throw new Error('Split shares cannot change while refunds are linked. Unlink refunds first.');
+    const keepNames = new Set(normalizedShares.map((share) => share.participant.toLowerCase()));
+    for (const current of existing.splitShares) {
+      if (!keepNames.has(current.participant.toLowerCase()) && current.settlements?.length) {
+        throw new Error(`Cannot remove ${current.participant}; they have settlement history. Set their share to zero instead.`);
+      }
+    }
   }
   if (data.type !== undefined) {
     if (!['expense', 'income'].includes(data.type)) {
@@ -233,29 +311,39 @@ export const updateTransaction = async (id, data) => {
     }
   }
 
-  return prisma.transaction.update({
-    where: { id },
-    data: updateData,
+  if (!normalizedShares) return prisma.transaction.update({ where: { id }, data: updateData });
+  return prisma.$transaction(async (db) => {
+    await replaceSplitShares(db, id, existing.splitShares, normalizedShares);
+    return db.transaction.update({ where: { id }, data: updateData, include: transactionDetails });
   });
 };
 
+const isRefund = (transaction) => Boolean(transaction.refundForId) || transaction.category?.trim().toLowerCase() === 'refund';
+const ownExpenseShare = (transaction) => {
+  const ownShare = transaction.splitShares?.find((share) => share.isSelf);
+  return ownShare ? ownShare.amount : transaction.amount;
+};
+const refundOwnShare = (refund) => {
+  const original = refund.refundFor;
+  if (!original?.amount) return refund.amount;
+  return refund.amount * (ownExpenseShare(original) / original.amount);
+};
+const roundMoney = (amount) => Math.round((amount + Number.EPSILON) * 100) / 100;
+
 export const getTransactionSummary = async () => {
-  // Exclude internal transfers marked as excludeFromReport
-  const transactions = await prisma.transaction.findMany({
-    where: { excludeFromReport: false },
-  });
-  const income = transactions
-    .filter((t) => t.type === 'income')
-    .reduce((acc, t) => acc + t.amount, 0);
-
-  const expense = transactions
-    .filter((t) => t.type === 'expense')
-    .reduce((acc, t) => acc + t.amount, 0);
-
+  const transactions = await prisma.transaction.findMany({ where: { excludeFromReport: false }, include: transactionDetails });
+  const totalIncome = transactions.reduce((sum, transaction) => {
+    return transaction.type === 'income' && !isRefund(transaction) ? sum + transaction.amount : sum;
+  }, 0);
+  const totalExpenses = transactions.reduce((sum, transaction) => {
+    if (transaction.type === 'expense') return sum + ownExpenseShare(transaction);
+    if (transaction.refundForId) return sum - refundOwnShare(transaction);
+    return sum;
+  }, 0);
   return {
-    totalIncome: income,
-    totalExpenses: expense,
-    balance: income - expense,
+    totalIncome: roundMoney(totalIncome),
+    totalExpenses: roundMoney(totalExpenses),
+    balance: roundMoney(totalIncome - totalExpenses),
     count: transactions.length,
   };
 };
@@ -279,40 +367,42 @@ export const getTransactionAnalytics = async (filters = {}) => {
     prisma.transaction.findMany({
       where,
       orderBy: { date: 'asc' },
+      include: transactionDetails,
     }),
     prisma.category.findMany({
       orderBy: { name: 'asc' },
     }),
   ]);
 
-  // 1. Totals (Transfers excluded)
-  const totalIncome = txs
-    .filter((t) => t.type === 'income')
-    .reduce((sum, t) => sum + t.amount, 0);
-  const totalExpenses = txs
-    .filter((t) => t.type === 'expense')
-    .reduce((sum, t) => sum + t.amount, 0);
-  const balance = totalIncome - totalExpenses;
-
-  // 2. Category Breakdown for Pie Chart (Expenses)
-  const catMap = {};
-  for (const t of txs) {
-    if (t.type === 'expense') {
-      const cat = t.category || 'Other';
-      if (!catMap[cat]) {
-        catMap[cat] = { name: cat, value: 0, count: 0 };
-      }
-      catMap[cat].value += t.amount;
-      catMap[cat].count += 1;
+  // Refund credits reduce expense on the credit date and never increase income.
+  // Split expenses include only the current user's own allocation.
+  const categoryTotals = new Map();
+  let totalIncome = 0;
+  let totalExpenses = 0;
+  const addCategoryAmount = (name, amount) => categoryTotals.set(name, (categoryTotals.get(name) || 0) + amount);
+  for (const transaction of txs) {
+    if (transaction.type === 'expense') {
+      const ownAmount = ownExpenseShare(transaction);
+      totalExpenses += ownAmount;
+      addCategoryAmount(transaction.category || 'Other', ownAmount);
+    } else if (transaction.refundForId) {
+      const reduction = refundOwnShare(transaction);
+      totalExpenses -= reduction;
+      addCategoryAmount(transaction.refundFor?.category || 'Other', -reduction);
+    } else if (transaction.type === 'income' && !isRefund(transaction)) {
+      totalIncome += transaction.amount;
     }
   }
+  const balance = totalIncome - totalExpenses;
 
-  const categoryBreakdown = Object.values(catMap)
-    .map((c) => ({
-      ...c,
-      value: Math.round(c.value * 100) / 100,
-      percentage: totalExpenses > 0 ? Math.round((c.value / totalExpenses) * 100) : 0,
+  // Category chart includes the net refund reduction under its original category.
+  const categoryBreakdown = Array.from(categoryTotals, ([name, value]) => ({
+      name,
+      value: roundMoney(value),
+      count: txs.filter((t) => t.category === name && t.type === 'expense').length,
+      percentage: totalExpenses > 0 ? Math.round((value / totalExpenses) * 100) : 0,
     }))
+    .filter((item) => item.value !== 0)
     .sort((a, b) => b.value - a.value);
 
   // 3. Time Series for Bar Chart
@@ -322,12 +412,13 @@ export const getTransactionAnalytics = async (filters = {}) => {
 
   if (isSingleDay) {
     for (const t of txs) {
-      const label = t.category || 'Other';
+      const label = t.refundFor?.category || t.category || 'Other';
       if (!timeMap[label]) {
         timeMap[label] = { label, income: 0, expense: 0 };
       }
-      if (t.type === 'income') timeMap[label].income += t.amount;
-      if (t.type === 'expense') timeMap[label].expense += t.amount;
+      if (t.type === 'income' && !isRefund(t)) timeMap[label].income += t.amount;
+      if (t.type === 'expense') timeMap[label].expense += ownExpenseShare(t);
+      if (t.refundForId) timeMap[label].expense -= refundOwnShare(t);
     }
   } else if (isSingleMonth) {
     for (const t of txs) {
@@ -338,8 +429,9 @@ export const getTransactionAnalytics = async (filters = {}) => {
       if (!timeMap[label]) {
         timeMap[label] = { label, date: d, income: 0, expense: 0 };
       }
-      if (t.type === 'income') timeMap[label].income += t.amount;
-      if (t.type === 'expense') timeMap[label].expense += t.amount;
+      if (t.type === 'income' && !isRefund(t)) timeMap[label].income += t.amount;
+      if (t.type === 'expense') timeMap[label].expense += ownExpenseShare(t);
+      if (t.refundForId) timeMap[label].expense -= refundOwnShare(t);
     }
   } else {
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -351,15 +443,16 @@ export const getTransactionAnalytics = async (filters = {}) => {
       if (!timeMap[label]) {
         timeMap[label] = { label, sortKey: d.substring(0, 7), income: 0, expense: 0 };
       }
-      if (t.type === 'income') timeMap[label].income += t.amount;
-      if (t.type === 'expense') timeMap[label].expense += t.amount;
+      if (t.type === 'income' && !isRefund(t)) timeMap[label].income += t.amount;
+      if (t.type === 'expense') timeMap[label].expense += ownExpenseShare(t);
+      if (t.refundForId) timeMap[label].expense -= refundOwnShare(t);
     }
   }
 
   const timeSeries = Object.values(timeMap).map((entry) => ({
     ...entry,
-    income: Math.round(entry.income * 100) / 100,
-    expense: Math.round(entry.expense * 100) / 100,
+    income: roundMoney(entry.income),
+    expense: roundMoney(entry.expense),
   }));
 
   // 4. Budget & Category Financials for Expand/Collapse Dashboard Cards
@@ -384,8 +477,8 @@ export const getTransactionAnalytics = async (filters = {}) => {
   // Compute category-level financials across all master categories
   const categoryFinancials = allCategories.map((cat) => {
     const catTxs = txs.filter((t) => t.category.toLowerCase() === cat.name.toLowerCase());
-    const catIncome = catTxs.filter((t) => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-    const catExpense = catTxs.filter((t) => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+    const catIncome = catTxs.filter((t) => t.type === 'income' && !isRefund(t)).reduce((sum, t) => sum + t.amount, 0);
+    const catExpense = categoryTotals.get(cat.name) || 0;
     // Monthly budgets are for spending categories only. Income and transfer
     // categories remain visible in their transaction breakdowns, but never
     // contribute to budget totals or remaining amounts.
@@ -443,9 +536,9 @@ export const getTransactionAnalytics = async (filters = {}) => {
 
   return {
     summary: {
-      totalIncome: Math.round(totalIncome * 100) / 100,
-      totalExpenses: Math.round(totalExpenses * 100) / 100,
-      balance: Math.round(balance * 100) / 100,
+      totalIncome: roundMoney(totalIncome),
+      totalExpenses: roundMoney(totalExpenses),
+      balance: roundMoney(balance),
       count: txs.length,
     },
     budget: {
@@ -454,7 +547,7 @@ export const getTransactionAnalytics = async (filters = {}) => {
       actualAmount: Math.round(totalExpenses * 100) / 100,
       incomeAmount: Math.round(totalIncome * 100) / 100,
       expenseAmount: Math.round(totalExpenses * 100) / 100,
-      incomeTransactionCount: txs.filter((t) => t.type === 'income').length,
+      incomeTransactionCount: txs.filter((t) => t.type === 'income' && !isRefund(t)).length,
       expenseTransactionCount: txs.filter((t) => t.type === 'expense').length,
       transactionCount: txs.length,
       remainingBudget: Math.round(overallRemaining * 100) / 100,
@@ -475,6 +568,110 @@ export const getTransactionAnalytics = async (filters = {}) => {
   };
 };
 
+export const getRefundCandidates = async (refundId) => {
+  const refund = await prisma.transaction.findUnique({ where: { id: refundId } });
+  if (!refund || refund.type !== 'income') throw new Error('Refund transaction not found');
+  const expenses = await prisma.transaction.findMany({
+    where: { type: 'expense', excludeFromReport: false },
+    include: { refunds: true },
+    orderBy: { date: 'desc' },
+  });
+  return expenses
+    .map((expense) => ({ ...expense, refundableAmount: roundMoney(expense.amount - expense.refunds.reduce((sum, item) => sum + item.amount, 0)) }))
+    .filter((expense) => expense.refundableAmount > 0)
+    .map(({ refunds: _refunds, ...expense }) => expense);
+};
+
+export const linkRefund = async (refundId, originalId) => {
+  const refund = await prisma.transaction.findUnique({ where: { id: refundId } });
+  if (!refund || refund.type !== 'income') throw new Error('Refund must be an income transaction');
+  if (!originalId) return prisma.transaction.update({ where: { id: refundId }, data: { refundForId: null, category: 'Refund', needsReview: true } });
+  const original = await prisma.transaction.findUnique({ where: { id: originalId }, include: { refunds: true } });
+  if (!original || original.type !== 'expense' || original.excludeFromReport) throw new Error('Choose a reportable expense purchase');
+  if (refund.id === original.id) throw new Error('A refund cannot be linked to itself');
+  const alreadyRefunded = original.refunds.filter((item) => item.id !== refundId).reduce((sum, item) => sum + item.amount, 0);
+  if (alreadyRefunded + refund.amount > original.amount + 0.001) throw new Error('Refund total cannot exceed the original purchase amount');
+  return prisma.transaction.update({
+    where: { id: refundId },
+    data: { refundForId: originalId, category: 'Refund', needsReview: false, confidence: 'manual' },
+    include: transactionDetails,
+  });
+};
+
+export const saveTransactionSplit = async (transactionId, shares) => {
+  if (!Array.isArray(shares) || shares.length < 2) throw new Error('A split needs your share and at least one friend');
+  const transaction = await prisma.transaction.findUnique({ where: { id: transactionId }, include: { splitShares: { include: { settlements: true } }, refunds: true } });
+  if (!transaction || transaction.type !== 'expense' || transaction.excludeFromReport || transaction.refundForId) throw new Error('Only reportable expense transactions can be split');
+  const normalized = shares.map((share) => ({
+    participant: String(share.participant || '').trim(),
+    amount: Number(share.amount),
+    isSelf: Boolean(share.isSelf),
+  }));
+  if (normalized.some((share) => !share.participant || !Number.isFinite(share.amount) || share.amount < 0)) throw new Error('Each split needs a participant and a valid non-negative amount');
+  if (normalized.filter((share) => share.isSelf).length !== 1) throw new Error('A split must contain exactly one “You” share');
+  if (normalized.some((share) => !share.isSelf && share.amount <= 0)) throw new Error('Friend shares must be greater than zero');
+  const uniqueNames = normalized.map((share) => share.participant.toLowerCase());
+  if (new Set(uniqueNames).size !== uniqueNames.length) throw new Error('Participant names must be unique in this split');
+  const total = roundMoney(normalized.reduce((sum, share) => sum + share.amount, 0));
+  if (Math.abs(total - transaction.amount) > 0.01) throw new Error('Split shares must add up to the transaction amount');
+
+  const existingByName = new Map(transaction.splitShares.map((share) => [share.participant.toLowerCase(), share]));
+  if (transaction.refunds.length && normalized.some((share) => {
+    const existing = existingByName.get(share.participant.toLowerCase());
+    return !existing || Math.abs(existing.amount - share.amount) > 0.001 || existing.isSelf !== share.isSelf;
+  })) throw new Error('Split shares cannot change while refunds are linked. Unlink refunds first.');
+  const keepNames = new Set(uniqueNames);
+  for (const existing of transaction.splitShares) {
+    if (!keepNames.has(existing.participant.toLowerCase()) && existing.settlements.length) {
+      throw new Error(`Cannot remove ${existing.participant}; they have settlement history. Set their share to zero instead.`);
+    }
+  }
+  return prisma.$transaction(async (db) => {
+    for (const existing of transaction.splitShares) {
+      if (!keepNames.has(existing.participant.toLowerCase())) await db.transactionSplitShare.delete({ where: { id: existing.id } });
+    }
+    for (const share of normalized) {
+      const existing = existingByName.get(share.participant.toLowerCase());
+      if (existing) await db.transactionSplitShare.update({ where: { id: existing.id }, data: { amount: share.amount, participant: share.participant, isSelf: share.isSelf } });
+      else await db.transactionSplitShare.create({ data: { transactionId, participant: share.participant, amount: share.amount, isSelf: share.isSelf } });
+    }
+    return db.transaction.findUnique({ where: { id: transactionId }, include: transactionDetails });
+  });
+};
+
+const splitShareBalance = (share) => {
+  const refundTotal = share.transaction.refunds.reduce((sum, refund) => sum + refund.amount, 0);
+  const refundShare = share.transaction.amount > 0 ? refundTotal * (share.amount / share.transaction.amount) : 0;
+  const received = share.settlements.filter((item) => item.direction === 'fromFriend').reduce((sum, item) => sum + item.amount, 0);
+  const returned = share.settlements.filter((item) => item.direction === 'toFriend').reduce((sum, item) => sum + item.amount, 0);
+  return roundMoney(share.amount - refundShare - received + returned);
+};
+
+export const getSplitReceivables = async () => {
+  const shares = await prisma.transactionSplitShare.findMany({
+    where: { isSelf: false },
+    include: { transaction: { include: { refunds: true } }, settlements: { orderBy: { date: 'asc' } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return shares.map((share) => ({ ...share, balanceDue: splitShareBalance(share) }));
+};
+
+export const settleSplitShare = async (shareId, { amount, date, note, direction = 'fromFriend' }) => {
+  const value = Number(amount);
+  if (!Number.isFinite(value) || value <= 0) throw new Error('Settlement amount must be positive');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) throw new Error('A valid settlement date is required');
+  if (!['fromFriend', 'toFriend'].includes(direction)) throw new Error('Invalid settlement direction');
+  const share = await prisma.transactionSplitShare.findUnique({
+    where: { id: shareId },
+    include: { transaction: { include: { refunds: true } }, settlements: true },
+  });
+  if (!share || share.isSelf) throw new Error('Friend share not found');
+  const balance = splitShareBalance(share);
+  if (direction === 'fromFriend' && (balance <= 0 || value > balance + 0.001)) throw new Error('Amount exceeds what this friend currently owes');
+  if (direction === 'toFriend' && (balance >= 0 || value > Math.abs(balance) + 0.001)) throw new Error('Amount exceeds the credit currently owed to this friend');
+  return prisma.splitSettlement.create({ data: { shareId, amount: value, date, note: note?.trim() || null, direction } });
+};
+
 export const transactionService = {
   getAll: getAllTransactions,
   create: createTransaction,
@@ -482,4 +679,9 @@ export const transactionService = {
   delete: deleteTransaction,
   getSummary: getTransactionSummary,
   getAnalytics: getTransactionAnalytics,
+  getRefundCandidates,
+  linkRefund,
+  saveSplit: saveTransactionSplit,
+  getSplitReceivables,
+  settleSplitShare,
 };

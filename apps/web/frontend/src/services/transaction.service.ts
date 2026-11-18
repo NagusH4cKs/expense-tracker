@@ -20,6 +20,8 @@ export interface TransactionItem {
   transferLinkedId?: string | null;
   transferStatus?: string | null;
   excludeFromReport?: boolean;
+  refundForId?: string | null;
+  splitShares?: Array<{ id: string; participant: string; amount: number; isSelf: boolean; settlements?: Array<{ amount: number; date: string; direction: string }> }>;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -143,6 +145,7 @@ export interface CreateTransactionDto {
   rulePattern?: string;
   ruleMatchType?: 'contains' | 'exact' | 'prefix' | 'regex';
   rulePriority?: number;
+  shares?: Array<{ participant: string; amount: number; isSelf: boolean }>;
 }
 
 export const transactionService = {
@@ -178,5 +181,29 @@ export const transactionService = {
   async getAnalytics(params?: GetAnalyticsQuery): Promise<AnalyticsData> {
     const res = await apiClient.get<ApiResponse<AnalyticsData>>('/transactions/analytics', { params });
     return res.data.data;
+  },
+
+  async getRefundCandidates(refundId: string): Promise<TransactionItem[]> {
+    const res = await apiClient.get<ApiResponse<TransactionItem[]>>(`/transactions/${refundId}/refund-candidates`);
+    return res.data.data;
+  },
+
+  async linkRefund(refundId: string, originalTransactionId: string | null): Promise<TransactionItem> {
+    const res = await apiClient.patch<ApiResponse<TransactionItem>>(`/transactions/${refundId}/refund`, { originalTransactionId });
+    return res.data.data;
+  },
+
+  async saveSplit(transactionId: string, shares: Array<{ participant: string; amount: number; isSelf: boolean }>): Promise<TransactionItem> {
+    const res = await apiClient.put<ApiResponse<TransactionItem>>(`/transactions/${transactionId}/split`, { shares });
+    return res.data.data;
+  },
+
+  async getSplitReceivables(): Promise<Array<any>> {
+    const res = await apiClient.get<ApiResponse<Array<any>>>('/transactions/split-receivables');
+    return res.data.data;
+  },
+
+  async settleSplitShare(shareId: string, data: { amount: number; date: string; note?: string; direction: 'fromFriend' | 'toFriend' }): Promise<void> {
+    await apiClient.post(`/transactions/split-shares/${shareId}/settlements`, data);
   },
 };

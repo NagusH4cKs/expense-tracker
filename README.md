@@ -1,5 +1,13 @@
 # Personal Expense Tracker
 
+## Run the Expo mobile app
+
+The native app lives in `apps/mobile` and connects to the same backend and account data as the web app. Set `EXPO_PUBLIC_API_URL` in `apps/mobile/.env` to the backend API URL before starting Expo. Use the computer's LAN IP address for a physical device (for example, `http://192.168.1.20:5000/api`); `localhost` on a phone points to the phone itself. For an Android emulator, use `http://10.0.2.2:5000/api`. Use an HTTPS URL for a deployed backend.
+
+Start the backend, then run `npm run dev:mobile` and open the project in Expo Go. The `npm run android --prefix apps/mobile` and `npm run ios --prefix apps/mobile` commands launch a connected emulator/simulator. iOS simulator builds require macOS; both iOS and Android store builds can be produced with Expo Application Services (EAS).
+
+The mobile app currently covers the web app's dashboard, income/expense transaction list and add/edit/delete flow, debt tracking and repayments, payment calendar, category/group/rule management, and CSV/Excel statement preview and import. Users sign in with their existing web account. The login screen respects the backend's existing registration setting.
+
 ## 1. Project Overview
 
 The Personal Expense Tracker is a web and mobile application for managing personal finances. Its target capabilities include importing bank statements, automatically categorizing transactions, tracking income and expenses, and presenting financial activity through dashboards and reports.

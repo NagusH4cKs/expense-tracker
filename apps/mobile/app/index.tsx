@@ -1,114 +1,271 @@
-import React from 'react';
-import { ScrollView, Text, View, StyleSheet, Pressable } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Modal, Platform, Pressable, RefreshControl, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import Svg, { Circle } from 'react-native-svg';
+import * as SecureStore from 'expo-secure-store';
+import * as DocumentPicker from 'expo-document-picker';
 
-export default function Home() {
-  return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>Dashboard</Text>
-      <Text style={styles.sub}>Personal finance</Text>
+const API_URL = (process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api').replace(/\/$/, '');
+type Page = 'Dashboard' | 'Transactions' | 'Debts' | 'Calendar' | 'Categories' | 'Import';
+type AnyRecord = Record<string, any>;
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-      <View style={styles.cards}>
-        <Card title="Income" value="₹1,34,764" />
-        <Card title="Expenses" value="₹1,37,565" />
-        <Card title="Balance" value="−₹2,801" />
-      </View>
+async function request(path: string, token?: string | null, options: RequestInit = {}) {
+  const response = await fetch(`${API_URL}${path}`, { ...options, headers: { Accept: 'application/json', ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers } });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || `Request failed (${response.status})`);
+  return data;
+}
+const json = (method: string, body?: unknown): RequestInit => ({ method, body: body === undefined ? undefined : JSON.stringify(body) });
+const money = (n = 0) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`;
+const day = () => new Date().toISOString().slice(0, 10);
 
-      <Text style={styles.head}>Recent transactions</Text>
-      {[
-        ['CAKE N SNA - tea', 'Snacks', '−₹15'],
-        ['DILIGENT GOVERNMENT - salary', 'Salary', '+₹1,29,762'],
-        ['R P PRAS - laptop', 'Laptop', '−₹67,565'],
-        ['UPSTOX SECURITIES', 'Investment', '+₹5,000'],
-      ].map((item, index) => (
-        <View style={styles.row} key={index}>
-          <View>
-            <Text style={styles.desc}>{item[0]}</Text>
-            <Text style={styles.cat}>{item[1]}</Text>
-          </View>
-          <Text style={styles.amount}>{item[2]}</Text>
-        </View>
-      ))}
+export default function Index() {
+  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<AnyRecord | null>(null);
+  const [booting, setBooting] = useState(true);
+  const [page, setPage] = useState<Page>('Dashboard');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [splittingTransaction, setSplittingTransaction] = useState<AnyRecord | null>(null);
+  const [linkingRefund, setLinkingRefund] = useState<AnyRecord | null>(null);
+  const [refundCandidates, setRefundCandidates] = useState<AnyRecord[]>([]);
+  const [refundBusy, setRefundBusy] = useState(false);
+  const [dashboardYear, setDashboardYear] = useState(String(new Date().getFullYear()));
+  const [dashboardMonth, setDashboardMonth] = useState(String(new Date().getMonth() + 1).padStart(2, '0'));
+  const [dashboardDate, setDashboardDate] = useState('all');
+  const [busy, setBusy] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [data, setData] = useState<AnyRecord>({});
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [registerMode, setRegisterMode] = useState(false);
+  const [search, setSearch] = useState('');
+  const [kind, setKind] = useState<'expense' | 'income'>('expense');
+  const [modal, setModal] = useState('');
+  const [form, setForm] = useState<AnyRecord>({});
+  const [selectedFile, setSelectedFile] = useState<any>(null);
+  const [preview, setPreview] = useState<AnyRecord | null>(null);
+  const [previewRows, setPreviewRows] = useState<AnyRecord[]>([]);
 
-      <Pressable style={styles.btn}>
-        <Text style={styles.btnText}>+ Add transaction</Text>
-      </Pressable>
+  useEffect(() => { (async () => {
+    try { const stored = await SecureStore.getItemAsync('expense_token'); if (stored) { setToken(stored); const me = await request('/auth/me', stored); setUser(me.user); } }
+    catch { await SecureStore.deleteItemAsync('expense_token'); setToken(null); }
+    finally { setBooting(false); }
+  })(); }, []);
+
+  const load = useCallback(async () => {
+    if (!token) return;
+    setBusy(true); setError('');
+    try {
+      let next: AnyRecord = {};
+      if (page === 'Dashboard') {
+        const q = `year=${encodeURIComponent(dashboardYear)}&month=${encodeURIComponent(dashboardMonth)}&date=${encodeURIComponent(dashboardDate)}`;
+        const [analytics, tx] = await Promise.all([request(`/transactions/analytics?${q}`, token), request('/transactions?page=1&limit=8', token)]);
+        next = { analytics: analytics.data, transactions: tx.data };
+      } else if (page === 'Transactions') {
+        const [tx, cats] = await Promise.all([request(`/transactions?page=1&limit=50&type=${kind}&search=${encodeURIComponent(search)}`, token), request('/categories', token)]);
+        next = { transactions: tx.data || [], pagination: tx.pagination, categories: cats.data || [] };
+      } else if (page === 'Debts') {
+        const [debts, splitReceivables, expenses, incomes] = await Promise.all([request('/debts', token), request('/transactions/split-receivables', token), request('/transactions?type=expense&page=1&limit=100', token), request('/transactions?type=income&page=1&limit=100', token)]);
+        next = { debts: debts.data || [], splitReceivables: splitReceivables.data || [], loanSources: (expenses.data || []).filter((t: AnyRecord) => !t.excludeFromReport && !t.isTransfer && !t.splitShares?.length), repaymentSources: (incomes.data || []).filter((t: AnyRecord) => !t.excludeFromReport && !t.isTransfer && !t.refundForId && t.category?.toLowerCase() !== 'refund') };
+      }
+      else if (page === 'Calendar') { const [events, cats] = await Promise.all([request('/calendar-events', token), request('/categories?type=expense', token)]); next = { events: events.data || [], categories: cats.data || [] }; }
+      else if (page === 'Categories') { const [cats, rules] = await Promise.all([request('/categories', token), request('/rules', token)]); next = { categories: cats.data || [], rules: rules.data || [] }; }
+      else if (page === 'Import') next.categories = (await request('/categories', token)).data || [];
+      setData(next);
+    } catch (e: any) { setError(e.message || 'Could not load data.'); }
+    finally { setBusy(false); setRefreshing(false); }
+  }, [token, page, kind, search, dashboardYear, dashboardMonth, dashboardDate]);
+  useEffect(() => { load(); }, [load]);
+
+  const updateForm = (key: string, value: any) => setForm((old: AnyRecord) => ({ ...old, [key]: value }));
+  const perform = async (fn: () => Promise<any>, message = 'Saved') => {
+    try { setError(''); await fn(); setModal(''); setForm({}); await load(); Alert.alert('Done', message); }
+    catch (e: any) { setError(e.message || 'Action failed.'); }
+  };
+  const login = async () => {
+    setBusy(true); setError('');
+    try { const result = await request(registerMode ? '/auth/register' : '/auth/login', null, json('POST', registerMode ? { username, password, name: displayName } : { username, password })); if (!result.token) throw new Error(result.message || (registerMode ? 'Registration failed' : 'Login failed')); await SecureStore.setItemAsync('expense_token', result.token); setToken(result.token); setUser(result.user); }
+    catch (e: any) { setError(e.message || 'Unable to sign in.'); }
+    finally { setBusy(false); }
+  };
+  const logout = async () => { await SecureStore.deleteItemAsync('expense_token'); setToken(null); setUser(null); setData({}); };
+  const openRefund = async (transaction: AnyRecord) => {
+    setLinkingRefund(transaction); setRefundBusy(true); setRefundCandidates([]);
+    try { setRefundCandidates((await request(`/transactions/${transaction.id}/refund-candidates`, token)).data || []); }
+    catch (e: any) { setError(e.message || 'Could not load purchases for this refund.'); }
+    finally { setRefundBusy(false); }
+  };
+
+  const importFile = async () => {
+    const picked = await DocumentPicker.getDocumentAsync({ type: ['text/csv', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'], copyToCacheDirectory: true });
+    if (!picked.canceled) { setSelectedFile(picked.assets[0]); setPreview(null); setError(''); }
+  };
+  const runPreview = async () => {
+    if (!selectedFile) { setError('Choose a CSV or Excel statement first.'); return; }
+    setBusy(true); setError('');
+    try {
+      const body = new FormData(); body.append('file', { uri: selectedFile.uri, name: selectedFile.name, type: selectedFile.mimeType || 'text/csv' } as any);
+      const res = await request('/import/preview', token, { method: 'POST', body }); setPreview(res.data); setPreviewRows((res.data.transactions || []).map((t: AnyRecord) => ({ ...t, selected: t.selected !== false })));
+    } catch (e: any) { setError(e.message || 'Unable to read this statement.'); }
+    finally { setBusy(false); }
+  };
+  const confirmImport = async () => {
+    const rows = previewRows.filter(t => t.selected && t.duplicateStatus !== 'confirmed');
+    await perform(async () => { for (let i = 0; i < rows.length; i += 50) await request('/import/confirm', token, json('POST', { transactions: rows.slice(i, i + 50) })); setPreview(null); setPreviewRows([]); setSelectedFile(null); }, `${rows.length} statement rows imported`);
+  };
+
+  if (booting) return <View style={styles.center}><ActivityIndicator size="large" color="#2563eb" /></View>;
+  if (!token) return <SafeAreaView style={styles.loginPage}><StatusBar barStyle="dark-content" /><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.loginInner}>
+    <View style={styles.brandMark}><Text style={styles.brandIcon}>₹</Text></View><Text style={styles.loginTitle}>{registerMode ? 'Create account' : 'Welcome back'}</Text><Text style={styles.muted}>{registerMode ? 'Create an Expense Tracker account' : 'Sign in to your Expense Tracker'}</Text>
+    {registerMode && <Field label="Name (optional)" value={displayName} onChangeText={setDisplayName} />}<Field label="Username" value={username} onChangeText={setUsername} autoCapitalize="none" /><Field label="Password" value={password} onChangeText={setPassword} secureTextEntry />
+    {!!error && <Text style={styles.error}>{error}</Text>}<Button label={busy ? 'Please wait…' : registerMode ? 'Create account' : 'Sign in'} onPress={login} disabled={busy} />
+    <Pressable onPress={() => { setRegisterMode(!registerMode); setError(''); }}><Text style={styles.actionText}>{registerMode ? 'Already have an account? Sign in' : 'Create an account'}</Text></Pressable>
+  </KeyboardAvoidingView></SafeAreaView>;
+
+  const nav: Page[] = ['Dashboard', 'Transactions', 'Debts', 'Calendar', 'Categories', 'Import'];
+  return <SafeAreaView style={styles.safe}><StatusBar barStyle="dark-content" />
+    <View style={styles.header}><Pressable accessibilityLabel="Open navigation" onPress={() => setDrawerOpen(true)} style={styles.menuButton}><Text style={styles.menuIcon}>☰</Text></Pressable><View style={{ flex: 1, marginLeft: 12 }}><Text style={styles.brand}>Expense Tracker</Text><Text style={styles.hello}>Hi, {user?.name || user?.username || 'there'}</Text></View><Pressable onPress={logout} style={styles.logout}><Text style={styles.logoutText}>Log out</Text></Pressable></View>
+    <View style={styles.contentHeader}><View><Text style={styles.pageTitle}>{page}</Text><Text style={styles.muted}>{page === 'Dashboard' ? 'Your money at a glance' : 'Manage your personal finances'}</Text></View>{page === 'Transactions' && <Pressable style={styles.smallPrimary} onPress={() => { setForm({ date: day(), type: kind, account: '', category: '', amount: '' }); setModal('transaction'); }}><Text style={styles.smallPrimaryText}>＋ Add</Text></Pressable>}{page === 'Debts' && <Pressable style={styles.smallPrimary} onPress={() => { setForm({ lentDate: day() }); setModal('debt'); }}><Text style={styles.smallPrimaryText}>＋ Add</Text></Pressable>}{page === 'Calendar' && <Pressable style={styles.smallPrimary} onPress={() => { setForm({ dueDate: day() }); setModal('event'); }}><Text style={styles.smallPrimaryText}>＋ Event</Text></Pressable>}{page === 'Categories' && <Pressable style={styles.smallPrimary} onPress={() => { setForm({ type: 'expense' }); setModal('category'); }}><Text style={styles.smallPrimaryText}>＋ Add</Text></Pressable>}</View>
+    {!!error && <Pressable onPress={() => setError('')}><Text style={styles.errorBanner}>{error}  ×</Text></Pressable>}
+    <ScrollView style={styles.body} contentContainerStyle={styles.bodyInner} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor="#2563eb" />}>
+      {busy && !refreshing && <ActivityIndicator style={{ marginBottom: 14 }} color="#2563eb" />}
+      {page === 'Dashboard' && <Dashboard data={data} year={dashboardYear} month={dashboardMonth} date={dashboardDate} onYearChange={(value: string) => { setDashboardYear(value); setDashboardDate('all'); }} onMonthChange={(value: string) => { setDashboardMonth(value); setDashboardDate('all'); }} onDateChange={setDashboardDate} onImport={() => setPage('Import')} />}
+      {page === 'Transactions' && <Transactions data={data} kind={kind} setKind={setKind} search={search} setSearch={setSearch} onEdit={(t: AnyRecord) => { setForm({ ...t, date: String(t.date).slice(0, 10), amount: String(t.amount) }); setModal('editTransaction'); }} onSplit={(t: AnyRecord) => setSplittingTransaction(t)} onRefund={openRefund} onDelete={(t: AnyRecord) => Alert.alert('Delete transaction?', t.description, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => perform(() => request(`/transactions/${t.id}`, token, json('DELETE')), 'Transaction deleted') }])} />}
+      {page === 'Debts' && <Debts data={data.debts || []} splitReceivables={data.splitReceivables || []} onRepay={(d: AnyRecord) => { setForm({ id: d.id, amount: '', date: day() }); setModal('repay'); }} onSettleShare={(share: AnyRecord) => { setForm({ id: share.id, amount: Math.abs(share.balanceDue), date: day(), direction: share.balanceDue > 0 ? 'fromFriend' : 'toFriend' }); setModal('splitSettle'); }} />}
+      {page === 'Calendar' && <Calendar data={data.events || []} onToggle={(e: AnyRecord) => perform(() => request(`/calendar-events/${e.id}`, token, json('PATCH', { isCompleted: !e.isCompleted })), 'Event updated')} onDelete={(e: AnyRecord) => perform(() => request(`/calendar-events/${e.id}`, token, json('DELETE')), 'Event deleted')} />}
+      {page === 'Categories' && <Categories data={data} onGroup={(cat: AnyRecord) => { setForm({ categoryId: cat.id }); setModal('group'); }} onEditCategory={(cat: AnyRecord) => { setForm({ ...cat }); setModal('editCategory'); }} onDeleteCategory={(cat: AnyRecord) => Alert.alert('Delete category?', cat.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => perform(() => request(`/categories/${cat.id}`, token, json('DELETE')), 'Category deleted') }])} onDeleteGroup={(group: AnyRecord) => Alert.alert('Delete group?', group.name, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => perform(() => request(`/groups/${group.id}`, token, json('DELETE')), 'Group deleted') }])} onDeleteRule={(rule: AnyRecord) => Alert.alert('Delete rule?', rule.pattern, [{ text: 'Cancel' }, { text: 'Delete', style: 'destructive', onPress: () => perform(() => request(`/rules/${rule.id}`, token, json('DELETE')), 'Rule deleted') }])} onRule={() => { setForm({ matchType: 'contains', priority: 50, bank: 'ALL' }); setModal('rule'); }} />}
+      {page === 'Import' && <Import data={data} file={selectedFile} preview={preview} rows={previewRows} setRows={setPreviewRows} onPick={importFile} onPreview={runPreview} onConfirm={confirmImport} busy={busy} />}
     </ScrollView>
-  );
+    {drawerOpen && <View style={styles.drawerOverlay}><View style={styles.drawer}><View style={styles.drawerBrand}><View style={styles.drawerMark}><Text style={styles.drawerMarkText}>₹</Text></View><View><Text style={styles.brand}>Expense Tracker</Text><Text style={styles.muted}>Personal finance</Text></View></View><Text style={styles.drawerSection}>MENU</Text>{nav.map((item, index) => <Pressable key={item} onPress={() => { setPage(item); setError(''); setDrawerOpen(false); }} style={[styles.drawerItem, page === item && styles.drawerItemActive]}><Text style={styles.drawerItemIcon}>{['⌂','▤','↔','▦','◈','⇧'][index]}</Text><Text style={[styles.drawerItemText, page === item && styles.drawerItemTextActive]}>{item === 'Transactions' ? 'Income & Expenses' : item === 'Calendar' ? 'Payment Calendar' : item === 'Categories' ? 'Category & Group Master' : item === 'Import' ? 'Import Statement' : item}</Text></Pressable>)}<View style={styles.drawerBottom}><Text style={styles.hello}>{user?.name || user?.username || 'Personal User'}</Text><Pressable onPress={logout} style={styles.drawerLogout}><Text style={styles.logoutText}>Log out</Text></Pressable></View></View><Pressable accessibilityLabel="Close navigation" style={styles.drawerScrim} onPress={() => setDrawerOpen(false)} /></View>}
+    {!!modal && <FormModal modal={modal} form={form} setForm={setForm} categories={data.categories || []} transactions={{loanSources:data.loanSources||[],repaymentSources:data.repaymentSources||[]}} onClose={() => { setModal(''); setForm({}); }} onSave={async (updates: AnyRecord = {}) => {
+      const f = { ...form, ...updates };
+      if (modal === 'transaction') await perform(() => request('/transactions', token, json('POST', { ...f, amount: Number(f.amount), type: kind })), 'Transaction added');
+      if (modal === 'editTransaction') await perform(() => request(`/transactions/${f.id}`, token, json('PATCH', { date: f.date, time: f.time || null, description: f.description, amount: Number(f.amount), account: f.account, category: f.category, group: f.group || null, remarks: f.remarks || null, reference: f.reference || null, shares: f.shares, isTransfer: !!f.isTransfer, excludeFromReport: !!f.excludeFromReport })), 'Transaction updated');
+      if (modal === 'debt') await perform(() => request('/debts', token, json('POST', { ...f, amount: Number(f.amount) })), 'Debt added');
+      if (modal === 'repay') await perform(() => request(`/debts/${f.id}/repayments`, token, json('POST', { amount: Number(f.amount), date: f.date, note: f.note, transactionId:f.transactionId || undefined })), 'Repayment saved');
+      if (modal === 'splitSettle') await perform(() => request(`/transactions/split-shares/${f.id}/settlements`, token, json('POST', { amount: Number(f.amount), date: f.date, note: f.note, direction: f.direction })), f.direction === 'fromFriend' ? 'Friend repayment recorded' : 'Credit repayment recorded');
+      if (modal === 'event') await perform(() => request('/calendar-events', token, json('POST', { ...f, amount: f.amount ? Number(f.amount) : null })), 'Event added');
+      if (modal === 'category') await perform(() => request('/categories', token, json('POST', { ...f, groupNames: f.groupNames ? f.groupNames.split(',').map((v: string) => v.trim()).filter(Boolean) : [] })), 'Category added');
+      if (modal === 'editCategory') await perform(() => request(`/categories/${f.id}`, token, json('PUT', { name: f.name, type: f.type, description: f.description })), 'Category updated');
+      if (modal === 'group') await perform(() => request('/groups', token, json('POST', f)), 'Group added');
+      if (modal === 'rule') await perform(() => request('/rules', token, json('POST', { ...f, priority: Number(f.priority) })), 'Rule added');
+    }} />}
+    <SplitTransactionModal transaction={splittingTransaction} onClose={() => setSplittingTransaction(null)} onSave={async (shares: AnyRecord[]) => { if (!splittingTransaction) return; try { await request(`/transactions/${splittingTransaction.id}/split`, token, json('PUT', { shares })); setSplittingTransaction(null); await load(); Alert.alert('Done', 'Expense split saved'); } catch (e: any) { setError(e.message || 'Could not save the expense split.'); } }} />
+    <RefundLinkModal transaction={linkingRefund} candidates={refundCandidates} loading={refundBusy} onClose={() => setLinkingRefund(null)} onSave={async (originalTransactionId: string) => { if (!linkingRefund) return; try { await request(`/transactions/${linkingRefund.id}/refund`, token, json('PATCH', { originalTransactionId })); setLinkingRefund(null); await load(); Alert.alert('Done', 'Refund linked to purchase; it is excluded from income.'); } catch (e: any) { setError(e.message || 'Could not link refund.'); } }} onUnlink={async () => { if (!linkingRefund) return; try { await request(`/transactions/${linkingRefund.id}/refund`, token, json('PATCH', { originalTransactionId: null })); setLinkingRefund(null); await load(); } catch (e: any) { setError(e.message || 'Could not unlink refund.'); } }} />
+  </SafeAreaView>;
 }
 
-function Card({ title, value }: { title: string; value: string }) {
-  return (
-    <View style={styles.card}>
-      <Text style={styles.sub}>{title}</Text>
-      <Text style={styles.val}>{value}</Text>
-    </View>
-  );
+function Dashboard({ data, year, month, date, onYearChange, onMonthChange, onDateChange, onImport }: any) {
+  const a = data.analytics; const summary = a?.summary || {};
+  const categories = a?.categoryBreakdown || [];
+  const financials = (a?.categoryFinancials || []).filter((item: AnyRecord) => item.type === 'expense');
+  const series = (a?.timeSeries || []).slice(-8);
+  const maxFlow = Math.max(1, ...series.map((v: AnyRecord) => Math.max(Number(v.income) || 0, Number(v.expense) || 0)));
+  const colors = ['#2563eb','#10b981','#f59e0b','#8b5cf6','#ef4444','#06b6d4','#f97316','#64748b'];
+  const availableDates: string[] = a?.filters?.availableDates || [];
+  const filteredDates = availableDates.filter((item) => (year === 'all' || item.startsWith(year)) && (month === 'all' || item.slice(5, 7) === month));
+  const yearOptions = [{ label: 'All years', value: 'all' }, ...(a?.filters?.availableYears || []).map((value: string) => ({ label: value, value }))];
+  const monthOptions = [{ label: 'All months', value: 'all' }, ...MONTHS.map((label, index) => ({ label, value: String(index + 1).padStart(2, '0') }))];
+  const dateOptions = [{ label: `All dates (${filteredDates.length})`, value: 'all' }, ...filteredDates.map((value) => ({ label: value, value }))];
+  const [expandedAll, setExpandedAll] = useState(false);
+  const pieTotal = categories.reduce((sum: number, item: AnyRecord) => sum + (Number(item.value) || 0), 0);
+  return <><View style={styles.card}><Text style={styles.sectionTitle}>Dashboard filters</Text><Text style={styles.muted}>Choose a year, month, and date for the overview and charts.</Text><View style={styles.filterRow}><FilterSelect label="Year" value={year} options={yearOptions} onChange={onYearChange} /><FilterSelect label="Month" value={month} options={monthOptions} onChange={onMonthChange} /><FilterSelect label="Date" value={date} options={dateOptions} onChange={onDateChange} /></View></View><View style={styles.metrics}><Metric label="Income" value={money(summary.totalIncome)} tone="green" /><Metric label="Expenses" value={money(summary.totalExpenses)} tone="red" /><Metric label="Balance" value={money(summary.balance)} tone="blue" /></View>
+    <View style={styles.card}><Text style={styles.sectionTitle}>Monthly budget</Text><Text style={styles.amount}>{money(a?.budget?.budgetAmount)}</Text><Text style={styles.muted}>Spent {money(a?.budget?.expenseAmount)} · Remaining {money(a?.budget?.remainingBudget)}</Text>{a?.budget && <Progress value={a.budget.percentageSpent || 0} />}</View>
+    <View style={styles.card}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>Monthly overview & budget breakdown</Text><Pressable onPress={() => setExpandedAll(!expandedAll)}><Text style={styles.actionText}>{expandedAll ? 'Collapse all' : 'Expand all categories'}</Text></Pressable></View><View style={styles.overviewSummary}><Metric label="Budget" value={money(a?.budget?.budgetAmount)} tone="blue" /><Metric label="Spent" value={money(a?.budget?.expenseAmount)} tone="red" /><Metric label="Remaining" value={money(a?.budget?.remainingBudget)} tone="green" /></View>{expandedAll && <View style={styles.categoryBudgetList}>{financials.map((item: AnyRecord, index: number) => <View key={item.category} style={styles.categoryBudgetItem}><View style={styles.rowBetween}><Text style={styles.rowTitle}>{item.category}</Text><Text style={styles.amountSmall}>{money(item.budgetAmount)} target</Text></View><Progress value={item.percentageSpent || 0} /><View style={styles.rowBetween}><Text style={styles.muted}>Spent {money(item.expenseAmount)}</Text><Text style={styles.muted}>{item.budgetAmount ? `${item.percentageSpent || 0}%` : 'No target set'}</Text></View></View>)}{!financials.length && <Empty text="No expense categories available." />}</View>}</View>
+    <View style={styles.card}><Text style={styles.sectionTitle}>Expenses by category · Pie chart</Text><Text style={styles.muted}>Category distribution · {money(pieTotal)} total</Text>{categories.length > 0 ? <View style={styles.pieChartRow}><View style={styles.pieWrap}><Svg width={180} height={180} viewBox="0 0 140 140"><Circle cx="70" cy="70" r="49" fill="none" stroke="#edf1f7" strokeWidth="20" />{categories.map((c: AnyRecord, i: number) => { const circumference = 2 * Math.PI * 49; const segment = pieTotal > 0 ? (Number(c.value) / pieTotal) * circumference : 0; const preceding = categories.slice(0, i).reduce((sum: number, part: AnyRecord) => sum + (Number(part.value) || 0), 0); const offset = pieTotal > 0 ? (preceding / pieTotal) * circumference : 0; return <Circle key={c.name} cx="70" cy="70" r="49" fill="none" stroke={colors[i % colors.length]} strokeWidth="20" strokeDasharray={`${segment} ${circumference - segment}`} strokeDashoffset={-offset} rotation={-90} origin="70, 70" />; })}</Svg><View style={styles.pieCenter}><Text style={styles.pieCenterLabel}>Expenses</Text><Text style={styles.pieCenterAmount}>{money(pieTotal)}</Text></View></View><View style={styles.pieLegend}>{categories.map((c: AnyRecord, i: number) => <View style={styles.breakdown} key={c.name}><View style={[styles.legendDot,{backgroundColor:colors[i % colors.length]}]} /><Text style={[styles.rowTitle,{flex:1}]} numberOfLines={1}>{c.name}</Text><Text style={styles.chartPercent}>{c.percentage || 0}%</Text><Text style={styles.amountSmall}>{money(c.value)}</Text></View>)}</View></View> : <Empty text="Category spending will appear here." />}</View>
+    <View style={styles.card}><Text style={styles.sectionTitle}>Income vs expense trend</Text><Text style={styles.muted}>Income and expenses across the selected period</Text>{series.length ? <><View style={styles.barChart}>{series.map((v: AnyRecord, i: number) => <View key={`${v.label}-${i}`} style={styles.barGroup}><View style={styles.barPair}><View style={[styles.chartBar,{height:Math.max(4,((Number(v.income)||0)/maxFlow)*112),backgroundColor:'#16a36a'}]} /><View style={[styles.chartBar,{height:Math.max(4,((Number(v.expense)||0)/maxFlow)*112),backgroundColor:'#ef5964'}]} /></View><Text style={styles.barLabel} numberOfLines={1}>{v.label}</Text></View>)}</View><View style={styles.chartLegend}><View style={styles.legendDotGreen}/><Text style={styles.muted}>Income</Text><View style={styles.legendDotRed}/><Text style={styles.muted}>Expenses</Text></View></> : <Empty text="No financial activity for this period." />}</View>
+    <View style={styles.card}><Text style={styles.sectionTitle}>Recent transactions</Text>{(data.transactions || []).slice(0, 8).map((t: AnyRecord) => <TransactionRow key={t.id} item={t} />)}{!data.transactions?.length && <Empty text="No transactions yet." />}</View>
+    <Button label="Import a bank statement" onPress={onImport} />
+  </>;
+}
+function FilterSelect({ label, value, options, onChange }: any) {
+  const [visible, setVisible] = useState(false);
+  const selected = options.find((option: AnyRecord) => option.value === value)?.label || value;
+  return <>
+    <Pressable onPress={() => setVisible(true)} style={styles.filterSelect}>
+      <Text style={styles.filterLabel}>{label}</Text>
+      <Text style={styles.filterValue} numberOfLines={1}>{selected}  ?</Text>
+    </Pressable>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
+      <View style={styles.pickerShade}><Pressable style={StyleSheet.absoluteFill} onPress={() => setVisible(false)} /><View style={styles.pickerCard}><Text style={styles.sectionTitle}>Select {label.toLowerCase()}</Text><ScrollView style={styles.pickerOptions} keyboardShouldPersistTaps="handled">{options.map((option: AnyRecord) => <Pressable key={option.value} onPress={() => { onChange(option.value); setVisible(false); }} style={[styles.pickerOption, option.value === value && styles.pickerOptionOn]}><Text style={[styles.pickerOptionText, option.value === value && styles.pickerOptionTextOn]}>{option.label}</Text>{option.value === value && <Text style={styles.actionText}>Selected</Text>}</Pressable>)}</ScrollView><Pressable onPress={() => setVisible(false)} style={styles.pickerCancel}><Text style={styles.actionText}>Cancel</Text></Pressable></View></View>
+    </Modal>
+  </>;
 }
 
-const styles = StyleSheet.create({
-  page: {
-    backgroundColor: '#f6f7fb',
-  },
-  content: {
-    padding: 20,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: '800',
-  },
-  sub: {
-    color: '#777',
-    fontSize: 13,
-  },
-  cards: {
-    gap: 12,
-    marginVertical: 22,
-  },
-  card: {
-    backgroundColor: '#fff',
-    padding: 18,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: '#e8e8ed',
-  },
-  val: {
-    fontSize: 22,
-    fontWeight: '700',
-    marginTop: 5,
-  },
-  head: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 10,
-  },
-  row: {
-    backgroundColor: '#fff',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  desc: {
-    fontWeight: '600',
-  },
-  cat: {
-    fontSize: 12,
-    color: '#777',
-    marginTop: 4,
-  },
-  amount: {
-    fontWeight: '700',
-  },
-  btn: {
-    backgroundColor: '#111',
-    padding: 14,
-    borderRadius: 10,
-    marginTop: 20,
-    alignItems: 'center',
-  },
-  btnText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-});
+function Transactions({ data, kind, setKind, search, setSearch, onEdit, onSplit, onRefund, onDelete }: any) {
+  return <><View style={styles.segment}><Pressable onPress={() => setKind('expense')} style={[styles.segmentButton, kind === 'expense' && styles.segmentOn]}><Text style={kind === 'expense' ? styles.segmentTextOn : styles.segmentText}>Expenses</Text></Pressable><Pressable onPress={() => setKind('income')} style={[styles.segmentButton, kind === 'income' && styles.segmentOn]}><Text style={kind === 'income' ? styles.segmentTextOn : styles.segmentText}>Income</Text></Pressable></View>
+    <TextInput value={search} onChangeText={setSearch} placeholder="Search transactions" style={styles.input} />
+    {(data.transactions || []).map((t: AnyRecord) => <View key={t.id} style={styles.card}><TransactionRow item={t} /><View style={styles.inlineActions}><Pressable onPress={() => onEdit(t)}><Text style={styles.actionText}>Edit transaction</Text></Pressable>{t.type === 'expense' && !t.excludeFromReport && <Pressable onPress={() => onSplit(t)}><Text style={styles.actionText}>{t.splitShares?.length ? 'Edit split' : 'Split with friends'}</Text></Pressable>}{t.type === 'income' && t.category?.toLowerCase() === 'refund' && <Pressable onPress={() => onRefund(t)}><Text style={styles.actionText}>{t.refundForId ? 'View linked refund' : 'Link to purchase'}</Text></Pressable>}<Pressable onPress={() => onDelete(t)}><Text style={styles.deleteText}>Delete</Text></Pressable></View>{t.needsReview && <Text style={styles.review}>Needs review</Text>}{t.isTransfer && <Text style={styles.tag}>Transfer</Text>}{t.refundForId && <Text style={styles.tag}>Refund · excluded from income</Text>}</View>)}{!data.transactions?.length && <Empty text="No matching transactions." />}</>;
+}
+function Debts({ data, splitReceivables, onRepay, onSettleShare }: any) { return <><View style={styles.card}><Text style={styles.sectionTitle}>Money lent</Text>{data.map((d: AnyRecord) => <View key={d.id} style={styles.categoryBudgetItem}><View style={styles.rowBetween}><Text style={styles.rowTitle}>{d.person}</Text><Text style={styles.amountSmall}>{d.isPaid ? 'Paid' : money(d.outstandingAmount)}</Text></View><Text style={styles.muted}>{d.description || 'Loan'} · Lent {String(d.lentDate).slice(0,10)}</Text><Progress value={d.amount ? d.repaidAmount / d.amount * 100 : 0} /><Text style={styles.muted}>Paid back {money(d.repaidAmount)} of {money(d.amount)}</Text>{!d.isPaid && <Pressable style={styles.outlineButton} onPress={() => onRepay(d)}><Text style={styles.actionText}>Record repayment</Text></Pressable>}</View>)}{!data.length && <Empty text="No loans recorded." />}</View><View style={styles.card}><Text style={styles.sectionTitle}>Shared expenses</Text>{splitReceivables.map((share: AnyRecord) => <View key={share.id} style={styles.categoryBudgetItem}><View style={styles.rowBetween}><Text style={styles.rowTitle}>{share.participant}</Text><Text style={[styles.amountSmall,{color:share.balanceDue < 0 ? '#be3340' : '#1d4ed8'}]}>{share.balanceDue < 0 ? `You owe ${money(Math.abs(share.balanceDue))}` : `${money(share.balanceDue)} owed`}</Text></View><Text style={styles.muted}>{share.transaction.description} · Share {money(share.amount)}</Text>{Math.abs(share.balanceDue) > 0.009 && <Pressable style={styles.outlineButton} onPress={() => onSettleShare(share)}><Text style={styles.actionText}>{share.balanceDue > 0 ? 'Record friend repayment' : 'Record credit paid'}</Text></Pressable>}</View>)}{!splitReceivables.length && <Empty text="No shared expenses." />}</View></>; }
+function Calendar({ data, onToggle, onDelete }: any) { const sorted = [...data].sort((a: AnyRecord,b: AnyRecord) => a.dueDate.localeCompare(b.dueDate)); return sorted.map((e: AnyRecord) => <View key={e.id} style={styles.card}><View style={styles.rowBetween}><Text style={[styles.sectionTitle, e.isCompleted && styles.strike]}>{e.title}</Text><Text style={styles.amountSmall}>{e.amount ? money(e.amount) : ''}</Text></View><Text style={styles.muted}>{String(e.dueDate).slice(0,10)}{e.dueTime ? ` · ${e.dueTime}` : ''}{e.category ? ` · ${e.category}` : ''}</Text>{e.description ? <Text style={styles.bodyText}>{e.description}</Text> : null}<View style={styles.inlineActions}><Pressable onPress={() => onToggle(e)}><Text style={styles.actionText}>{e.isCompleted ? 'Mark pending' : 'Mark complete'}</Text></Pressable><Pressable onPress={() => onDelete(e)}><Text style={styles.deleteText}>Delete</Text></Pressable></View></View>); }
+function Categories({ data, onGroup, onRule, onEditCategory, onDeleteCategory, onDeleteGroup, onDeleteRule }: any) { return <><View style={styles.card}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>Categories & groups</Text></View>{(data.categories || []).map((c: AnyRecord) => <View key={c.id} style={styles.categoryRow}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>{c.name}</Text><Text style={styles.muted}>{c.type} · {(c.groups || []).map((g: AnyRecord) => g.name).join(', ') || 'No groups'}</Text></View><Pressable onPress={() => onEditCategory(c)}><Text style={styles.actionText}>Edit</Text></Pressable><Pressable onPress={() => onGroup(c)}><Text style={styles.actionText}>＋ Group</Text></Pressable><Pressable onPress={() => onDeleteCategory(c)}><Text style={styles.deleteText}>×</Text></Pressable>{(c.groups || []).map((g: AnyRecord) => <Pressable key={g.id} onPress={() => onDeleteGroup(g)}><Text style={styles.deleteText}>{g.name} ×</Text></Pressable>)}</View>)}</View><View style={styles.card}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>Auto-categorization rules</Text><Pressable onPress={onRule}><Text style={styles.actionText}>＋ Add</Text></Pressable></View>{(data.rules || []).map((r: AnyRecord) => <View key={r.id} style={styles.categoryRow}><View style={{ flex: 1 }}><Text style={styles.rowTitle}>{r.pattern}</Text><Text style={styles.muted}>{r.matchType} · {r.category}{r.group ? ` / ${r.group}` : ''}</Text></View><Text style={styles.tag}>{r.isActive === false ? 'Off' : 'Active'}</Text><Pressable onPress={() => onDeleteRule(r)}><Text style={styles.deleteText}>×</Text></Pressable></View>)}</View></>; }
+function Import({ data, file, preview, rows, setRows, onPick, onPreview, onConfirm, busy }: any) { return <><View style={styles.card}><Text style={styles.sectionTitle}>Import statement</Text><Text style={styles.muted}>Select a CSV or Excel statement. We’ll identify rows, flag duplicates, and let you review before saving.</Text><Pressable style={styles.outlineButton} onPress={onPick}><Text style={styles.actionText}>{file ? file.name : 'Choose statement file'}</Text></Pressable>{file && <Button label={busy ? 'Reading…' : 'Preview statement'} onPress={onPreview} disabled={busy} />}</View>{preview && <><View style={styles.card}><Text style={styles.sectionTitle}>{preview.accountName || 'Statement'} · {preview.totalRows} rows</Text><Text style={styles.muted}>{preview.newItemsCount} new · {preview.duplicatesCount} duplicates · {preview.needsReviewCount || 0} need review</Text></View>{rows.slice(0, 150).map((r: AnyRecord, i: number) => <Pressable key={r.tempId || i} onPress={() => setRows(rows.map((x: AnyRecord, j: number) => j === i ? { ...x, selected: !x.selected } : x))} style={[styles.card, !r.selected && styles.dimmed]}><View style={styles.rowBetween}><Text style={styles.rowTitle}>{r.selected ? '☑' : '□'} {r.description || r.rawRemarks}</Text><Text style={styles.amountSmall}>{money(r.amount)}</Text></View><Text style={styles.muted}>{String(r.date).slice(0,10)} · {r.category}{r.group ? ` / ${r.group}` : ''}</Text>{r.duplicateStatus && r.duplicateStatus !== 'none' && <Text style={styles.review}>{r.duplicateStatus} duplicate</Text>}</Pressable>)}<Button label={busy ? 'Importing…' : `Import ${rows.filter((r: AnyRecord) => r.selected && r.duplicateStatus !== 'confirmed').length} selected rows`} onPress={onConfirm} disabled={busy} /></>}</>; }
+
+function SplitTransactionModal({ transaction, onClose, onSave }: any) {
+  const [shares, setShares] = useState<AnyRecord[]>([]);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { if (transaction) setShares(transaction.splitShares?.length ? transaction.splitShares.map((s: AnyRecord) => ({ participant: s.participant, amount: String(s.amount), isSelf: s.isSelf })) : [{ participant: 'You', amount: String(transaction.amount), isSelf: true }, { participant: '', amount: '', isSelf: false }]); }, [transaction?.id]);
+  const total = shares.reduce((sum: number, share: AnyRecord) => sum + (Number(share.amount) || 0), 0);
+  const change = (index: number, key: string, value: string) => setShares((list) => list.map((share, i) => i === index ? { ...share, [key]: value } : share));
+  const equal = () => { if (!transaction || !shares.length) return; const each = Math.floor(transaction.amount / shares.length * 100) / 100; const next = shares.map((share) => ({ ...share, amount: each.toFixed(2) })); next[next.length - 1].amount = (transaction.amount - each * (shares.length - 1)).toFixed(2); setShares(next); };
+  return <Modal visible={!!transaction} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalShade}><View style={styles.modalCard}><ScrollView keyboardShouldPersistTaps="handled"><View style={styles.rowBetween}><Text style={styles.sectionTitle}>Split expense</Text><Pressable onPress={onClose}><Text style={styles.close}>×</Text></Pressable></View>{transaction && <Text style={styles.muted}>{transaction.description} · {money(transaction.amount)} total</Text>}{shares.map((share, index) => <View key={index} style={styles.splitRow}>{share.isSelf ? <Text style={[styles.fieldLabel,{flex:1}]}>Your share</Text> : <TextInput value={share.participant} onChangeText={(v) => change(index,'participant',v)} placeholder="Friend name" style={[styles.input,{flex:1,marginTop:0}]} />}<TextInput value={share.amount} onChangeText={(v) => change(index,'amount',v)} keyboardType="decimal-pad" placeholder="Amount" style={[styles.input,styles.splitAmountInput]} />{!share.isSelf && <Pressable onPress={() => setShares((list) => list.filter((_s, i) => i !== index))}><Text style={styles.deleteText}>×</Text></Pressable>}</View>)}<View style={styles.rowBetween}><Pressable onPress={() => setShares((list) => [...list,{participant:'',amount:'',isSelf:false}])}><Text style={styles.actionText}>＋ Add friend</Text></Pressable><Pressable onPress={equal}><Text style={styles.actionText}>Split evenly</Text></Pressable></View><Text style={[styles.muted,{textAlign:'right'}]}>Allocated {money(total)} / {money(transaction?.amount || 0)}</Text><Button label={saving ? 'Saving…' : 'Save split'} disabled={saving || Math.abs(total - (transaction?.amount || 0)) > 0.01 || shares.some((s) => !s.isSelf && !s.participant.trim())} onPress={async () => { setSaving(true); await onSave(shares.map((s) => ({ ...s, participant: s.isSelf ? 'You' : s.participant.trim(), amount: Number(s.amount) }))); setSaving(false); }} /></ScrollView></View></View></Modal>;
+}
+
+function RefundLinkModal({ transaction, candidates, loading, onClose, onSave, onUnlink }: any) {
+  const [selected, setSelected] = useState('');
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { if (transaction) setSelected(transaction.refundForId || ''); }, [transaction?.id]);
+  return <Modal visible={!!transaction} transparent animationType="slide" onRequestClose={onClose}><View style={styles.modalShade}><View style={styles.modalCard}><View style={styles.rowBetween}><Text style={styles.sectionTitle}>Link refund to purchase</Text><Pressable onPress={onClose}><Text style={styles.close}>×</Text></Pressable></View><Text style={styles.muted}>{transaction?.description} · {money(transaction?.amount || 0)}. This will reduce spending and will not count as income.</Text>{loading ? <ActivityIndicator style={{margin:20}} color="#2563eb"/> : <ScrollView style={{maxHeight:340}}>{candidates.map((candidate: AnyRecord) => <Pressable key={candidate.id} onPress={() => setSelected(candidate.id)} style={[styles.card,styles.refundCandidate,selected === candidate.id && styles.choiceOn]}><View style={styles.rowBetween}><Text style={styles.rowTitle}>{candidate.description}</Text><Text style={styles.amountSmall}>{money(candidate.amount)}</Text></View><Text style={styles.muted}>{candidate.date} · {candidate.category} · {money(candidate.refundableAmount)} refundable</Text></Pressable>)}{!candidates.length && <Empty text="No purchases with remaining refundable amount."/>}</ScrollView>}<Button label={saving ? 'Saving…' : 'Link refund'} disabled={!selected || loading || saving} onPress={async () => { setSaving(true); await onSave(selected); setSaving(false); }}/>{transaction?.refundForId && <Pressable onPress={onUnlink} style={styles.outlineButton}><Text style={styles.actionText}>Unlink refund</Text></Pressable>}</View></View></Modal>;
+}
+
+function FormModal({ modal, form, setForm, categories, transactions, onClose, onSave }: any) {
+  const [editShares, setEditShares] = useState<AnyRecord[]>([]);
+  useEffect(() => {
+    setEditShares(modal === 'editTransaction' ? (form.splitShares || []).map((share: AnyRecord) => ({
+      participant: share.participant,
+      amount: String(share.amount),
+      isSelf: share.isSelf,
+    })) : []);
+  }, [modal, form.id]);
+  const set = (key: string) => (value: string) => setForm((old: AnyRecord) => ({ ...old, [key]: value }));
+  const allocatedAmount = editShares.reduce((sum, share) => sum + (Number(share.amount) || 0), 0);
+  const sharesMatchTotal = !editShares.length || Math.abs(allocatedAmount - (Number(form.amount) || 0)) <= 0.001;
+  const saveForm = () => onSave(editShares.length ? {
+    shares: editShares.map((share) => ({ ...share, amount: Number(share.amount) })),
+  } : {});
+  let fields: Array<[string,string,string?]> = [];
+  if (modal === 'transaction') fields = [['description','Description'],['amount','Amount (INR)','numeric'],['date','Date (YYYY-MM-DD)'],['account','Account'],['category','Category'],['group','Group (optional)'],['remarks','Bank remarks (optional)']];
+  if (modal === 'editTransaction') fields = [['description','Description'],['amount','Amount (INR)','numeric'],['date','Date (YYYY-MM-DD)'],['time','Time (optional)'],['account','Account'],['category','Category'],['group','Group (optional)'],['remarks','Bank remarks (optional)'],['reference','Reference (optional)']];
+  if (modal === 'debt') fields = [['person','Person'],['description','Note (optional)'],['amount','Amount (INR)','numeric'],['lentDate','Date lent (YYYY-MM-DD)']];
+  if (modal === 'repay') fields = [['amount','Repayment amount (INR)','numeric'],['date','Repayment date (YYYY-MM-DD)'],['note','Note (optional)']];
+  if (modal === 'splitSettle') fields = [['amount','Settlement amount (INR)','numeric'],['date','Settlement date (YYYY-MM-DD)'],['note','Note (optional)']];
+  if (modal === 'event') fields = [['title','Title'],['description','Description (optional)'],['dueDate','Due date (YYYY-MM-DD)'],['dueTime','Time (optional)'],['amount','Amount (optional)','numeric'],['category','Category (optional)']];
+  if (modal === 'category') fields = [['name','Category name'],['description','Description (optional)'],['groupNames','Groups (comma separated)']];
+  if (modal === 'editCategory') fields = [['name','Category name'],['description','Description (optional)']];
+  if (modal === 'group') fields = [['name','Group name'],['description','Description (optional)']];
+  if (modal === 'rule') fields = [['pattern','Description match'],['matchType','Match type: contains / exact / prefix / regex'],['category','Category'],['group','Group (optional)'],['bank','Bank/account (ALL for any)'],['priority','Priority','numeric']];
+  return <View style={styles.modalShade}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalCard}><ScrollView keyboardShouldPersistTaps="handled"><View style={styles.rowBetween}><Text style={styles.sectionTitle}>{({ transaction:'Add transaction', editTransaction:'Edit transaction', debt:'Record money lent', repay:'Record repayment', splitSettle:form.direction === 'fromFriend' ? 'Record friend repayment' : 'Record credit paid to friend', event:'Add calendar event', category:'Add category', editCategory:'Edit category', group:'Add group', rule:'Add categorization rule' } as any)[modal]}</Text><Pressable onPress={onClose}><Text style={styles.close}>×</Text></Pressable></View>
+    {fields.map(([key,label,type]) => <Field key={key} label={label} value={String(form[key] ?? '')} onChangeText={set(key)} keyboardType={type === 'numeric' ? 'decimal-pad' : 'default'} />)}
+    {modal === 'editTransaction' && editShares.length > 0 && <View style={styles.choiceList}><Text style={styles.fieldLabel}>Split allocations</Text>{editShares.map((share, index) => <View key={share.participant} style={styles.splitRow}><Text style={[styles.fieldLabel,{flex:1}]}>{share.isSelf ? 'Your share' : share.participant}</Text><TextInput value={share.amount} onChangeText={(value) => setEditShares((rows) => rows.map((row, rowIndex) => rowIndex === index ? { ...row, amount: value } : row))} keyboardType="decimal-pad" placeholder="Share amount" style={[styles.input,styles.splitAmountInput]} /></View>)}<Text style={[styles.muted,{textAlign:'right'}]}>Allocated {money(allocatedAmount)} / {money(Number(form.amount) || 0)}</Text>{!sharesMatchTotal && <Text style={styles.error}>Adjust shares to match the transaction amount.</Text>}</View>}
+    {modal === 'debt' && <View style={styles.choiceList}><Text style={styles.fieldLabel}>Link bank expense (optional)</Text><ScrollView horizontal>{[{id:'',description:'No link'},...(transactions?.loanSources||[])].map((t:AnyRecord) => <Pressable key={t.id || 'none'} onPress={() => setForm((old:AnyRecord) => ({...old,sourceTransactionId:t.id||undefined,...(t.id?{amount:String(t.amount),lentDate:String(t.date).slice(0,10)}:{})}))} style={[styles.choice,form.sourceTransactionId===t.id&&styles.choiceOn]}><Text style={form.sourceTransactionId===t.id?styles.choiceTextOn:styles.choiceText}>{t.id?`${t.description} · ${money(t.amount)}`:'No link'}</Text></Pressable>)}</ScrollView></View>}
+    {modal === 'repay' && <View style={styles.choiceList}><Text style={styles.fieldLabel}>Link bank repayment (optional)</Text><ScrollView horizontal>{[{id:'',description:'No link'},...(transactions?.repaymentSources||[])].map((t:AnyRecord) => <Pressable key={t.id || 'none'} onPress={() => setForm((old:AnyRecord) => ({...old,transactionId:t.id||undefined,...(t.id?{amount:String(t.amount),date:String(t.date).slice(0,10)}:{})}))} style={[styles.choice,form.transactionId===t.id&&styles.choiceOn]}><Text style={form.transactionId===t.id?styles.choiceTextOn:styles.choiceText}>{t.id?`${t.description} · ${money(t.amount)}`:'No link'}</Text></Pressable>)}</ScrollView></View>}
+    {modal === 'transaction' && <><Text style={styles.fieldLabel}>Type: {form.type}</Text><Text style={styles.fieldLabel}>Category and account must match existing values where required.</Text></>}
+    {['category','editCategory'].includes(modal) && <View style={styles.choiceList}><Text style={styles.fieldLabel}>Category type</Text><ScrollView horizontal>{['expense','income','transfer'].map(type => <Pressable key={type} onPress={() => setForm({ ...form, type })} style={[styles.choice, form.type === type && styles.choiceOn]}><Text style={form.type === type ? styles.choiceTextOn : styles.choiceText}>{type}</Text></Pressable>)}</ScrollView></View>}
+    {(modal === 'editTransaction') && <><Toggle label="Transfer" value={!!form.isTransfer} onValueChange={(v: boolean) => setForm({ ...form, isTransfer: v })} /><Toggle label="Exclude from reports" value={!!form.excludeFromReport} onValueChange={(v: boolean) => setForm({ ...form, excludeFromReport: v })} /></>}
+    {!!categories.length && ['transaction','event','rule'].includes(modal) && <View style={styles.choiceList}><Text style={styles.fieldLabel}>Pick a category</Text><ScrollView horizontal>{categories.map((c: AnyRecord) => <Pressable key={c.id} onPress={() => setForm({ ...form, category: c.name })} style={[styles.choice, form.category === c.name && styles.choiceOn]}><Text style={form.category === c.name ? styles.choiceTextOn : styles.choiceText}>{c.name}</Text></Pressable>)}</ScrollView></View>}
+    <Button label="Save" onPress={saveForm} disabled={!sharesMatchTotal} /></ScrollView></KeyboardAvoidingView></View>;
+}
+
+function Field(props: any) { return <View style={styles.field}><Text style={styles.fieldLabel}>{props.label}</Text><TextInput {...props} placeholder={props.placeholder || props.label} placeholderTextColor="#94a3b8" style={styles.input} autoCapitalize={props.autoCapitalize || 'sentences'} /></View>; }
+function Button({ label, onPress, disabled }: any) { return <Pressable onPress={onPress} disabled={disabled} style={[styles.button, disabled && { opacity: .6 }]}><Text style={styles.buttonText}>{label}</Text></Pressable>; }
+function Metric({ label, value, tone }: any) { return <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text style={[styles.metricValue, tone === 'green' ? { color:'#168452' } : tone === 'red' ? { color:'#c2414b' } : { color:'#1d4ed8' }]}>{value}</Text></View>; }
+function Progress({ value }: any) { return <View style={styles.progressTrack}><View style={[styles.progressFill, { width: `${Math.max(0,Math.min(100,Number(value)||0))}%` }]} /></View>; }
+function TransactionRow({ item }: any) { const positive = item.type === 'income'; return <View style={styles.txRow}><View style={styles.txIcon}><Text style={{ color: positive ? '#168452' : '#c2414b', fontWeight: '800' }}>{positive ? '↙' : '↗'}</Text></View><View style={{ flex: 1 }}><Text style={styles.rowTitle} numberOfLines={1}>{item.description}</Text><Text style={styles.muted}>{String(item.date || '').slice(0,10)} · {item.category}{item.account ? ` · ${item.account}` : ''}</Text></View><Text style={[styles.txAmount, { color: positive ? '#168452' : '#c2414b' }]}>{positive ? '+' : '−'}{money(item.amount)}</Text></View>; }
+function Empty({ text }: any) { return <Text style={styles.empty}>{text}</Text>; }
+function Toggle({ label, value, onValueChange }: any) { return <View style={styles.toggle}><Text style={styles.bodyText}>{label}</Text><Switch value={value} onValueChange={onValueChange} /></View>; }
+
+const styles = StyleSheet.create({ splitRow:{ flexDirection:'row',alignItems:'center',gap:8,marginTop:12 }, splitAmountInput:{ width:104,marginTop:0 }, refundCandidate:{ marginTop:10,padding:12 }, filterRow:{ flexDirection:'row',gap:8,marginTop:14 }, filterSelect:{ flex:1,minWidth:0,borderWidth:1,borderColor:'#dbe3ef',borderRadius:11,backgroundColor:'#fff',paddingHorizontal:10,paddingVertical:9 }, filterLabel:{ color:'#64748b',fontSize:10,fontWeight:'700',textTransform:'uppercase' }, filterValue:{ color:'#1e293b',fontSize:12,fontWeight:'700',marginTop:5 }, pickerShade:{ flex:1,justifyContent:'center',alignItems:'center',padding:24,backgroundColor:'rgba(15,23,42,.48)' }, pickerCard:{ width:'100%',maxWidth:420,maxHeight:'80%',backgroundColor:'#fff',borderRadius:20,padding:18,elevation:18 }, pickerOptions:{ marginTop:12 }, pickerOption:{ minHeight:46,flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:12,borderBottomWidth:1,borderBottomColor:'#f1f5f9' }, pickerOptionOn:{ backgroundColor:'#eef4ff',borderRadius:10 }, pickerOptionText:{ color:'#334155',fontSize:14,fontWeight:'600' }, pickerOptionTextOn:{ color:'#1d4ed8',fontWeight:'800' }, pickerCancel:{ alignItems:'center',padding:12,marginTop:8,borderTopWidth:1,borderTopColor:'#e8edf4' }, overviewSummary:{ flexDirection:'row',gap:8,marginTop:15 }, categoryBudgetList:{ marginTop:14,borderTopWidth:1,borderTopColor:'#e8edf4' }, categoryBudgetItem:{ paddingVertical:11,borderBottomWidth:1,borderBottomColor:'#f1f5f9',gap:7 }, pieChartRow:{ alignItems:'center' }, pieWrap:{ width:190,height:190,alignItems:'center',justifyContent:'center',marginVertical:14 }, pieCenter:{ position:'absolute',alignItems:'center',justifyContent:'center' }, pieCenterLabel:{ color:'#64748b',fontSize:11,fontWeight:'600' }, pieCenterAmount:{ color:'#172033',fontSize:14,fontWeight:'800',marginTop:4 }, pieLegend:{ width:'100%' }, drawerOverlay:{ position:'absolute',left:0,right:0,top:0,bottom:0,flexDirection:'row',zIndex:20 }, drawerScrim:{ flex:1,backgroundColor:'rgba(15,23,42,.42)' }, drawer:{ width:300,maxWidth:'84%',backgroundColor:'#fff',paddingTop:20,paddingHorizontal:18,paddingBottom:24,elevation:16 }, drawerBrand:{ flexDirection:'row',alignItems:'center',gap:12,paddingVertical:12,borderBottomWidth:1,borderBottomColor:'#e8edf4' }, drawerMark:{ width:42,height:42,borderRadius:14,backgroundColor:'#2563eb',alignItems:'center',justifyContent:'center' }, drawerMarkText:{ color:'#fff',fontSize:24,fontWeight:'800' }, drawerSection:{ color:'#94a3b8',fontSize:11,fontWeight:'800',letterSpacing:1,marginTop:24,marginBottom:10,marginLeft:8 }, drawerItem:{ flexDirection:'row',alignItems:'center',gap:13,paddingVertical:13,paddingHorizontal:12,borderRadius:12,marginBottom:4 }, drawerItemActive:{ backgroundColor:'#eaf0ff' }, drawerItemIcon:{ width:22,textAlign:'center',fontSize:19,color:'#64748b' }, drawerItemText:{ flex:1,color:'#334155',fontSize:14,fontWeight:'600' }, drawerItemTextActive:{ color:'#1d4ed8',fontWeight:'800' }, drawerBottom:{ marginTop:'auto',paddingTop:18,borderTopWidth:1,borderTopColor:'#e8edf4',gap:12 }, drawerLogout:{ alignSelf:'flex-start',paddingHorizontal:12,paddingVertical:9,borderRadius:10,backgroundColor:'#f1f5f9' }, menuButton:{ width:38,height:38,alignItems:'center',justifyContent:'center',borderRadius:11,backgroundColor:'#fff',borderWidth:1,borderColor:'#e2e8f0' }, menuIcon:{ color:'#334155',fontSize:20,fontWeight:'700' }, scopeRow:{ flexDirection:'row',gap:8,marginTop:12 }, scopeChip:{ borderWidth:1,borderColor:'#dbe3ef',paddingHorizontal:11,paddingVertical:8,borderRadius:10,backgroundColor:'#fff' }, scopeChipOn:{ backgroundColor:'#eaf0ff',borderColor:'#9ab5f6' }, scopeText:{ color:'#64748b',fontSize:12,fontWeight:'700' }, scopeTextOn:{ color:'#1d4ed8' }, chartStack:{ height:14,flexDirection:'row',borderRadius:8,overflow:'hidden',marginTop:16,marginBottom:8,backgroundColor:'#eef2f7' }, legendDot:{ width:9,height:9,borderRadius:5 }, chartPercent:{ color:'#64748b',fontSize:11,fontWeight:'700',width:35,textAlign:'right' }, barChart:{ height:160,flexDirection:'row',alignItems:'flex-end',justifyContent:'space-around',gap:4,paddingTop:18,paddingBottom:2,marginTop:12,borderBottomWidth:1,borderBottomColor:'#e8edf4' }, barGroup:{ flex:1,alignItems:'center',justifyContent:'flex-end',height:'100%' }, barPair:{ flexDirection:'row',alignItems:'flex-end',gap:3,height:116 }, chartBar:{ width:9,minHeight:4,borderTopLeftRadius:4,borderTopRightRadius:4 }, barLabel:{ marginTop:7,color:'#64748b',fontSize:9,maxWidth:'100%' }, chartLegend:{ flexDirection:'row',alignItems:'center',gap:7,marginTop:12 }, legendDotGreen:{ width:9,height:9,borderRadius:5,backgroundColor:'#16a36a' }, legendDotRed:{ width:9,height:9,borderRadius:5,backgroundColor:'#ef5964',marginLeft:10 }, safe:{ flex:1, backgroundColor:'#f6f8fc' }, center:{ flex:1, alignItems:'center', justifyContent:'center', backgroundColor:'#f6f8fc' }, loginPage:{ flex:1, backgroundColor:'#f6f8fc' }, loginInner:{ flex:1, justifyContent:'center', padding:24 }, brandMark:{ width:54,height:54,borderRadius:17,backgroundColor:'#2563eb',alignItems:'center',justifyContent:'center',marginBottom:22 }, brandIcon:{ color:'#fff',fontSize:30,fontWeight:'800' }, loginTitle:{ color:'#0f172a',fontSize:30,fontWeight:'800' }, muted:{ color:'#64748b',fontSize:13,marginTop:5 }, footnote:{ color:'#94a3b8',fontSize:12,lineHeight:18,textAlign:'center',marginTop:18 }, header:{ flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingHorizontal:20,paddingTop:12,paddingBottom:10 }, brand:{ fontSize:17,fontWeight:'800',color:'#0f172a' }, hello:{ color:'#64748b',fontSize:12,marginTop:2 }, logout:{ paddingHorizontal:12,paddingVertical:8,borderRadius:10,backgroundColor:'#fff',borderWidth:1,borderColor:'#e2e8f0' }, logoutText:{ color:'#475569',fontSize:12,fontWeight:'700' }, nav:{ maxHeight:52,flexGrow:0 }, navInner:{ paddingHorizontal:15,alignItems:'center',gap:8 }, navItem:{ paddingVertical:9,paddingHorizontal:13,borderRadius:12,backgroundColor:'transparent' }, navActive:{ backgroundColor:'#e8efff' }, navText:{ color:'#64748b',fontWeight:'600',fontSize:13 }, navTextActive:{ color:'#1d4ed8' }, contentHeader:{ paddingHorizontal:20,paddingTop:14,paddingBottom:14,flexDirection:'row',alignItems:'center',justifyContent:'space-between' }, pageTitle:{ fontSize:25,fontWeight:'800',color:'#111827' }, body:{ flex:1 }, bodyInner:{ paddingHorizontal:16,paddingBottom:30,gap:12 }, metrics:{ flexDirection:'row',gap:8 }, metric:{ flex:1,backgroundColor:'#fff',borderRadius:15,padding:13,borderWidth:1,borderColor:'#e8edf4' }, metricLabel:{ fontSize:11,color:'#64748b',fontWeight:'600' }, metricValue:{ fontSize:16,fontWeight:'800',marginTop:8 }, card:{ backgroundColor:'#fff',padding:16,borderRadius:16,borderWidth:1,borderColor:'#e8edf4' }, sectionTitle:{ fontSize:16,fontWeight:'800',color:'#172033' }, amount:{ fontSize:24,fontWeight:'800',color:'#172033',marginTop:12 }, amountSmall:{ fontSize:13,fontWeight:'800',color:'#172033' }, breakdown:{ flexDirection:'row',alignItems:'center',gap:14,marginTop:13 }, progressTrack:{ height:6,backgroundColor:'#eef2f7',borderRadius:4,overflow:'hidden',marginTop:7 }, progressFill:{ height:6,backgroundColor:'#4777e8',borderRadius:4 }, rowTitle:{ fontSize:13,fontWeight:'700',color:'#1e293b' }, txRow:{ flexDirection:'row',alignItems:'center',gap:10,paddingVertical:10,borderBottomWidth:1,borderBottomColor:'#f0f2f6' }, txIcon:{ width:32,height:32,borderRadius:11,backgroundColor:'#f1f5f9',alignItems:'center',justifyContent:'center' }, txAmount:{ fontSize:12,fontWeight:'800' }, button:{ backgroundColor:'#2563eb',borderRadius:12,alignItems:'center',justifyContent:'center',padding:14,marginTop:12 }, buttonText:{ color:'#fff',fontSize:14,fontWeight:'800' }, smallPrimary:{ backgroundColor:'#2563eb',paddingHorizontal:12,paddingVertical:9,borderRadius:10 }, smallPrimaryText:{ color:'#fff',fontWeight:'800',fontSize:12 }, segment:{ flexDirection:'row',backgroundColor:'#e9eef6',borderRadius:12,padding:4 }, segmentButton:{ flex:1,alignItems:'center',padding:9,borderRadius:9 }, segmentOn:{ backgroundColor:'#fff' }, segmentText:{ color:'#64748b',fontWeight:'700',fontSize:13 }, segmentTextOn:{ color:'#1d4ed8',fontWeight:'800',fontSize:13 }, input:{ backgroundColor:'#fff',borderColor:'#dfe6ef',borderWidth:1,borderRadius:11,paddingHorizontal:12,paddingVertical:11,color:'#0f172a',fontSize:14,marginTop:6 }, inlineActions:{ flexDirection:'row',gap:20,marginTop:11 }, actionText:{ color:'#2455c6',fontSize:12,fontWeight:'700' }, deleteText:{ color:'#be3340',fontSize:12,fontWeight:'700' }, review:{ color:'#ad6d0e',fontSize:11,fontWeight:'700',marginTop:6 }, tag:{ color:'#475569',fontSize:10,backgroundColor:'#f1f5f9',overflow:'hidden',paddingHorizontal:8,paddingVertical:4,borderRadius:8 }, outlineButton:{ borderWidth:1,borderColor:'#cbd5e1',padding:11,borderRadius:10,alignItems:'center',marginTop:12 }, rowBetween:{ flexDirection:'row',alignItems:'center',justifyContent:'space-between',gap:10 }, bodyText:{ color:'#475569',fontSize:13,marginTop:8 }, strike:{ textDecorationLine:'line-through',color:'#94a3b8' }, categoryRow:{ flexDirection:'row',alignItems:'center',gap:12,paddingVertical:12,borderBottomWidth:1,borderBottomColor:'#f1f5f9' }, empty:{ color:'#94a3b8',fontSize:13,textAlign:'center',paddingVertical:20 }, error:{ color:'#b42332',fontSize:13,marginTop:12 }, errorBanner:{ color:'#9f2431',backgroundColor:'#fff0f0',marginHorizontal:16,marginBottom:8,padding:10,borderRadius:9,fontSize:12 }, field:{ marginTop:12 }, fieldLabel:{ color:'#475569',fontSize:12,fontWeight:'700' }, modalShade:{ position:'absolute',left:0,right:0,top:0,bottom:0,backgroundColor:'rgba(15,23,42,.42)',justifyContent:'flex-end' }, modalCard:{ maxHeight:'90%',backgroundColor:'#f8fafc',borderTopLeftRadius:22,borderTopRightRadius:22,padding:20,paddingBottom:28 }, close:{ color:'#64748b',fontSize:28,paddingHorizontal:8 }, choiceList:{ marginTop:12 }, choice:{ borderWidth:1,borderColor:'#d6deeb',borderRadius:9,paddingHorizontal:10,paddingVertical:7,marginRight:7,marginTop:7,backgroundColor:'#fff' }, choiceOn:{ borderColor:'#2563eb',backgroundColor:'#eaf0ff' }, choiceText:{ color:'#475569',fontSize:12 }, choiceTextOn:{ color:'#1d4ed8',fontWeight:'700',fontSize:12 }, toggle:{ flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:8 }, dimmed:{ opacity:.55 } });

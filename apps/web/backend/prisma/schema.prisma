@@ -38,9 +38,9 @@ model Group {
 }
 
 model Transaction {
-  id                String   @id @default(uuid())
+  id                String                  @id @default(uuid())
   userId            String
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user              User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   date              String
   time              String?
   description       String
@@ -48,19 +48,25 @@ model Transaction {
   category          String
   group             String?
   amount            Float
-  type              String   // "expense" | "income"
+  type              String // "expense" | "income"
   account           String
   reference         String?
   balance           Float?
-  needsReview       Boolean  @default(false)
-  confidence        String?  @default("rule") // "high" | "rule" | "low" | "manual"
+  needsReview       Boolean                 @default(false)
+  confidence        String?                 @default("rule") // "high" | "rule" | "low" | "manual"
   matchedRuleId     String?
-  isTransfer        Boolean  @default(false)
+  isTransfer        Boolean                 @default(false)
   transferLinkedId  String?
-  transferStatus    String?  // "linked" | "one_sided"
-  excludeFromReport Boolean  @default(false)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  transferStatus    String? // "linked" | "one_sided"
+  excludeFromReport Boolean                 @default(false)
+  refundForId       String?
+  refundFor         Transaction?            @relation("TransactionRefund", fields: [refundForId], references: [id], onDelete: SetNull)
+  refunds           Transaction[]           @relation("TransactionRefund")
+  splitShares       TransactionSplitShare[]
+  debtDisbursement  Debt?                   @relation("DebtDisbursement")
+  debtRepayment     DebtRepayment?          @relation("DebtRepaymentTransaction")
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
 
   @@unique([userId, reference])
   @@index([userId])
@@ -69,6 +75,42 @@ model Transaction {
   @@index([date])
   @@index([needsReview])
   @@index([isTransfer])
+  @@index([refundForId])
+}
+
+model TransactionSplitShare {
+  id            String            @id @default(uuid())
+  userId        String
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactionId String
+  transaction   Transaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  participant   String
+  amount        Float
+  isSelf        Boolean           @default(false)
+  settlements   SplitSettlement[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@unique([transactionId, participant])
+  @@index([userId])
+  @@index([transactionId])
+}
+
+model SplitSettlement {
+  id        String                @id @default(uuid())
+  userId    String
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shareId   String
+  share     TransactionSplitShare @relation(fields: [shareId], references: [id], onDelete: Cascade)
+  amount    Float
+  direction String                @default("fromFriend") // "fromFriend" | "toFriend"
+  date      String
+  note      String?
+  createdAt DateTime              @default(now())
+
+  @@index([userId])
+  @@index([shareId])
+  @@index([date])
 }
 
 model CalendarEvent {
@@ -93,7 +135,7 @@ model CategorizationRule {
   id            String   @id @default(uuid())
   userId        String
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  pattern       String   // e.g. "tea, coffee, snacks, juice", "F ", "home", "zerodha"
+  pattern       String // e.g. "tea, coffee, snacks, juice", "F ", "home", "zerodha"
   matchType     String   @default("contains") // "contains" | "exact" | "prefix" | "regex"
   category      String
   group         String?
@@ -114,7 +156,7 @@ model Budget {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   year      Int
-  month     Int      // 1 - 12
+  month     Int // 1 - 12
   category  String   @default("ALL") // "ALL" for total monthly budget, or category name (e.g. "Investment")
   amount    Float
   createdAt DateTime @default(now())
@@ -125,16 +167,18 @@ model Budget {
 }
 
 model Debt {
-  id          String        @id @default(uuid())
-  userId      String
-  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  person      String
-  description String?
-  amount      Float
-  lentDate    String
-  repayments  DebtRepayment[]
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  id                  String          @id @default(uuid())
+  userId              String
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person              String
+  description         String?
+  amount              Float
+  lentDate            String
+  sourceTransactionId String?         @unique
+  sourceTransaction   Transaction?    @relation("DebtDisbursement", fields: [sourceTransactionId], references: [id], onDelete: SetNull)
+  repayments          DebtRepayment[]
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
   @@index([lentDate])
   @@index([person])
@@ -142,15 +186,17 @@ model Debt {
 }
 
 model DebtRepayment {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  debtId    String
-  debt      Debt     @relation(fields: [debtId], references: [id], onDelete: Cascade)
-  amount    Float
-  date      String
-  note      String?
-  createdAt DateTime @default(now())
+  id            String       @id @default(uuid())
+  userId        String
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  debtId        String
+  debt          Debt         @relation(fields: [debtId], references: [id], onDelete: Cascade)
+  amount        Float
+  date          String
+  note          String?
+  transactionId String?      @unique
+  transaction   Transaction? @relation("DebtRepaymentTransaction", fields: [transactionId], references: [id], onDelete: SetNull)
+  createdAt     DateTime     @default(now())
 
   @@index([debtId])
   @@index([userId])
@@ -158,18 +204,20 @@ model DebtRepayment {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  username  String   @unique
-  password  String
-  name      String?
-  categories Category[]
-  groups Group[]
-  transactions Transaction[]
-  rules CategorizationRule[]
-  budgets Budget[]
-  debts Debt[]
-  debtRepayments DebtRepayment[]
-  calendarEvents CalendarEvent[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                     String                  @id @default(uuid())
+  username               String                  @unique
+  password               String
+  name                   String?
+  categories             Category[]
+  groups                 Group[]
+  transactions           Transaction[]
+  rules                  CategorizationRule[]
+  budgets                Budget[]
+  debts                  Debt[]
+  debtRepayments         DebtRepayment[]
+  transactionSplitShares TransactionSplitShare[]
+  splitSettlements       SplitSettlement[]
+  calendarEvents         CalendarEvent[]
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
 }
